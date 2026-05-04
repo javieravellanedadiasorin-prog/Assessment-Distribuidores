@@ -49,7 +49,7 @@ DISTRIBUTORS_LATAM_PATH = DATA_DIR / "distributors_master_latam.csv"
 DISTRIBUTORS_MASTER_PATH = DATA_DIR / "distributors_master.csv"
 
 APP_TITLE = "LATAM Distributor Service Excellence Assessment"
-APP_VERSION = "v3.3"
+APP_VERSION = "v3.4"
 
 RESPONSE_SCORE = {
     "Y - Cumple": 1.0,
@@ -91,6 +91,547 @@ COLUMN_SYNONYMS = {
     "os_version": ["Operating System", "OS", "OS Version", "Windows version", "Windows Version", "Sistema operativo"],
     "blood_bank": ["In Blook Bank", "In Blood Bank", "Blood Bank", "Banco de sangre", "Banco Sangre"],
 }
+
+
+# ------------------------------------------------------------
+# Embedded fallback data
+# ------------------------------------------------------------
+# Estos datos permiten que la app funcione aunque Streamlit Cloud no encuentre
+# los CSV dentro de /data. La app sigue intentando leer los archivos externos
+# primero; si no existen, usa estas listas internas.
+FALLBACK_DISTRIBUTORS = [
+    {
+        "Distributor name": "ARSAL",
+        "Country": "El Salvador",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "ARSAL",
+        "Country": "El Salvador",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Annar Diagnostica Import sas",
+        "Country": "Colombia",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Bio-Nuclear",
+        "Country": "Dominican Republic",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Biodiz",
+        "Country": "Peru",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Biotec del Paraguay, S.R.L.",
+        "Country": "Paraguay",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Capris Médica",
+        "Country": "Costa Rica",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Caribbean Medical Supplies inc.",
+        "Country": "Guyana",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed (Guatemala)",
+        "Country": "Guatemala",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed (Guatemala)",
+        "Country": "Guatemala",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Aruba",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Bahamas",
+        "World Region": "North America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Barbados",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Caribbean - Central America - Florida",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Cayman Islands",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Curacao",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Grenada",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "St. Lucia",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "Trinidad and Tobago",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "DiaMed Caribbean",
+        "Country": "US based",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Diagnostico UAL",
+        "Country": "Peru",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Diagnostika Capris",
+        "Country": "Guatemala",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Dimex Medica",
+        "Country": "Honduras",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Export LATAM",
+        "Country": "Colombia",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Grupo Bios",
+        "Country": "Chile",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Infotec",
+        "Country": "Paraguay",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Isla Lab Products LLC",
+        "Country": "Bahamas",
+        "World Region": "North America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Isla Lab Products LLC",
+        "Country": "Caribbean - Central America - Florida",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Isla Lab Products LLC",
+        "Country": "Puerto Rico",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Isla Lab Products LLC",
+        "Country": "Puerto Rico",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Lab IVD Uruguay SA (Wiener lab group)",
+        "Country": "Uruguay",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Laboratories Cienvar S.A.",
+        "Country": "Venezuela",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Laboratorio Livio Barnafi",
+        "Country": "Chile",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "QLS PANAMA",
+        "Country": "Panama",
+        "World Region": "Central America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "QUIMIOLAB",
+        "Country": "Colombia",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Referencia Laboratorio Clini",
+        "Country": "Dominican Republic",
+        "World Region": "The Caribbean",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Simed (Ecuador)",
+        "Country": "Ecuador",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "Simed (Peru)",
+        "Country": "Peru",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "WM Argentina S.A.",
+        "Country": "Argentina",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    },
+    {
+        "Distributor name": "WP Biomed",
+        "Country": "Peru",
+        "World Region": "South America",
+        "Commercial Region": "LATAM"
+    }
+]
+
+FALLBACK_CORPORATE_QUESTIONS = [
+    {
+        "Macro Category": "Customer Visit",
+        "Item": "Customer 1",
+        "Definition": "Visit a customer where the PM has been performed in the instrument in the last 3 months (LXL)",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "Fundacion Santa Fe de Bogotá LXL/LAS 2210100729",
+        "Evidence Required": "Visit report; photos; PM evidence; instrument SN; findings and action plan."
+    },
+    {
+        "Macro Category": "Customer Visit",
+        "Item": "Customer 2",
+        "Definition": "VIP customer visit.",
+        "Needed In Advance": "",
+        "Original Response": "P",
+        "Original Comments": "Herasmo Meoz Cucuta LXL 2210007457-2210007453",
+        "Evidence Required": "Visit report; photos; customer feedback; instrument SN; pending actions."
+    },
+    {
+        "Macro Category": "Customer Visit",
+        "Item": "Customer 3",
+        "Definition": "System with the most amount of failures.",
+        "Needed In Advance": "",
+        "Original Response": "P",
+        "Original Comments": "Higuera Escalante Bucaramanga LXS 2290000331",
+        "Evidence Required": "Failure history; troubleshooting evidence; visit report; corrective action plan."
+    },
+    {
+        "Macro Category": "Service Tools",
+        "Item": "Lubrication Kits",
+        "Definition": "How many kits are available in the stock?\nHow many FSEs are in possession of a full kit? (Lubrication Kit and Super lube).\nDefine the amount of kits to be ordered.",
+        "Needed In Advance": "Data to be compiled before the assessment:\n# of fits available in stock.\n# of kits already provided to FSEs.",
+        "Original Response": "Y",
+        "Original Comments": "3 kits in stock, 4 Superlub kits, 5 engineers with kits in their tool case, no need to order",
+        "Evidence Required": "Tool inventory; photos; kit assignment list by FSE; gap/order list."
+    },
+    {
+        "Macro Category": "Service Tools",
+        "Item": "System Dedicated Tools",
+        "Definition": "How many set of tools are available in the stock?\nHow many FSEs are in possession of a full set? (depending on the systems avaialble in the country).\nDefine the amount of sets to be ordered.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "2 dedicated tools in the engineer's toolbox, need to order 2 kits",
+        "Evidence Required": "Dedicated tool inventory by platform; photos; FSE assignment list; gap/order list."
+    },
+    {
+        "Macro Category": "Service Tools",
+        "Item": "Service Tools",
+        "Definition": "Evaluate the type of tools used by the FSEs.\nAre they in possession of all the tools needed to service the systems?\nScrewdrivers (different sizes and heads), allen keys (T and L shapped, both flat and rounded heads), are the allen keys milimetric or standard, etc.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "General tool inventory; photos; missing tools list; corrective plan."
+    },
+    {
+        "Macro Category": "Service Tools",
+        "Item": "Bomgar",
+        "Definition": "How many systems are connected to bomgar compared to the whole installed base?\nSN Missing and reason why the system is not connected to Bomgar.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "36  in routine, 27 have BeyondTrust, all instruments will be connected by Dec. 2025",
+        "Evidence Required": "Bomgar/BeyondTrust installed base report; missing SN list; reason and action plan."
+    },
+    {
+        "Macro Category": "Contact List",
+        "Item": "Contacts",
+        "Definition": "Get the full contact list of all relevant people working with Diasorin: email, phone number, position and responsabilities.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "Updated contact list with service, applications, logistics, management and escalation contacts."
+    },
+    {
+        "Macro Category": "Contact List",
+        "Item": "FSE and AS Training Status",
+        "Definition": "Evaluate the training status of all FSEs and ASs currently servicing DS instruments.",
+        "Needed In Advance": "",
+        "Original Response": "P",
+        "Original Comments": "Training advanced needed",
+        "Evidence Required": "Training matrix by engineer, platform, level, certification status and expiration/retraining needs."
+    },
+    {
+        "Macro Category": "Contact List",
+        "Item": "ISR - Live",
+        "Definition": "Update ISR - Live contact list.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "Screenshot or export showing updated contacts in ISR-Live."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "Installed Base Update",
+        "Definition": "Performed the installed base certification.\nGet the installed base certification format signed.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "letter signed and uploaded to Teams",
+        "Evidence Required": "Signed installed base certification letter; ISR-Live export; supporting evidence uploaded by distributor."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "System Configuration",
+        "Definition": "Update all systems: no \"data not avaialble\" nor \"don't know\" allowed to be left in the fields.",
+        "Needed In Advance": "Data needed that needs to be collected before the assessment:\nLiaison XL: PC Model, OS and User SW Version.\nLiaison XS: User SW Version.\nLQS: OS and PC Model.",
+        "Original Response": "P",
+        "Original Comments": "Information verified and reported need to complete",
+        "Evidence Required": "ISR-Live CSV showing complete Machine Configuration for every active SN; no Don't know, Data not available, Not done or blank values."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "Customer Data",
+        "Definition": "All customer data shall be reported into ISR - Live.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "Information verified against installed base and ISR Live",
+        "Evidence Required": "ISR-Live export with customer name, country, city, address and key customer fields completed."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "System Status",
+        "Definition": "Update the system status of all systems.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "verified information",
+        "Evidence Required": "ISR-Live export showing correct operational status for each system: in routine, scrapped, stock, removed, demo, etc."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "PM Planner",
+        "Definition": "ISR - Live PM Planner shall contain the information of at least the last 3 PMs performed on each system (installed and not installed, not required for new systems that have never been installed).",
+        "Needed In Advance": "Work orders of all PMs performed within the last 12 months (up until the assessment is done).",
+        "Original Response": "Y",
+        "Original Comments": "verified information",
+        "Evidence Required": "PM Planner export or screenshots; work orders for the last 12 months; evidence of last 3 PMs per applicable system."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "PM Completion Evaluation (%)",
+        "Definition": "Evaluate the % of completion of every quarter until this assessment is performed.\nDefine an action plan for overdue PMs.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "PM completion table by quarter; overdue PM list; corrective action plan."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "PM Plan",
+        "Definition": "Define a calendar with the dates when all future PMs will be performed during the rest of the year.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "PM calendar for remaining year by customer, SN, quarter and responsible FSE."
+    },
+    {
+        "Macro Category": "Installed Base Certification",
+        "Item": "PM Kit Stock",
+        "Definition": "Evalaute the amount of PM kits avaialble in the country VS the PMs to be performed during the rest of the year.",
+        "Needed In Advance": "",
+        "Original Response": "P",
+        "Original Comments": "completed",
+        "Evidence Required": "PM kit stock file; remaining PM demand; gap analysis."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "Bomgar",
+        "Definition": "Open accounts as needed.\nClose accounts as needed.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "Four accounts are shared, all four are active.",
+        "Evidence Required": "List of active BeyondTrust/Bomgar accounts; users to create; users to remove; justification."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "TCM",
+        "Definition": "",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "List of active TCM accounts; users to create/remove."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "Apparound",
+        "Definition": "",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "List of active Apparound accounts; users to create/remove."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "Filezilla",
+        "Definition": "",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "List of active FTPS/FileZilla accounts; users to create/remove."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "ISR - Live",
+        "Definition": "",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "List of active ISR-Live accounts; users to create/remove."
+    },
+    {
+        "Macro Category": "DiaSorin Accounts Optimization",
+        "Item": "RGA Manager",
+        "Definition": "",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "completed",
+        "Evidence Required": "List of active RGA Manager accounts; users to create/remove; confirmation of trained users."
+    },
+    {
+        "Macro Category": "Technical Evaluation",
+        "Item": "FSEs",
+        "Definition": "Perform the FSE evaluation to all FSEs servicing DS instruments.",
+        "Needed In Advance": "Provide the list of FSEs to take the quiz.\nComplete the quiz before the assessment is done.\nRecovery session to be done during the assessment.",
+        "Original Response": "P",
+        "Original Comments": "5 engineers not compleated the basic LXL exam",
+        "Evidence Required": "FSE assessment results; attendance list; recovery plan for failed or pending engineers."
+    },
+    {
+        "Macro Category": "Technical Evaluation",
+        "Item": "Lead FSE",
+        "Definition": "Perform the lead evaluation to the Lead FSEs.",
+        "Needed In Advance": "In case an Advanced SS Session does not take place during the visit, the following must be done:\nProvide the list of FSEs to take the quiz.\nComplete the quiz before the assessment is done.\nRecovery session to be done during the assessment.",
+        "Original Response": "Y",
+        "Original Comments": "The lead engineer must retake the exam in December 2025.",
+        "Evidence Required": "Lead FSE assessment result; advanced session evidence; retraining plan if needed."
+    },
+    {
+        "Macro Category": "Stock Level",
+        "Item": "Data Extraction",
+        "Definition": "Evaluate the way the data is extracted.\nEvaluate the outcome of the extraction: Location, link to invoice number, QTY, etc.",
+        "Needed In Advance": "Get the SP stock file for analysis before the assessment is done.",
+        "Original Response": "Y",
+        "Original Comments": "The entire distributor's spare parts inventory is managed with software called Odoo; in less than an hour they can find out what they have and where it is.",
+        "Evidence Required": "Spare parts stock file; extraction method; inventory owner; location and quantity fields."
+    },
+    {
+        "Macro Category": "Stock Level",
+        "Item": "Analysis",
+        "Definition": "Compare the current stock vs the stock level the distributor shall mantain.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "The Odoo software automatically generates the need for additional parts if they are used or if your IB increases.",
+        "Evidence Required": "Stock gap analysis versus carstock/minimum requirement; value using Option 2 when applicable."
+    },
+    {
+        "Macro Category": "Service Traceability System",
+        "Item": "Traceability Tool",
+        "Definition": "Does the distributor have a CRM Software?\nName the software used for traceability of work orders.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "ODOO ERP",
+        "Evidence Required": "Name of CRM/ERP/tool; screenshots or workflow evidence; user/process description."
+    },
+    {
+        "Macro Category": "Service Traceability System",
+        "Item": "Service Order Categorization",
+        "Definition": "Are the WO categorized by the Distributor?\nAre the categories compatible with DS's?\nEvaluate the possibility to harmonize the distributor's categories with DS's.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "categorized by volume, urgency and type of service, corrective, preventive, installation",
+        "Evidence Required": "WO category list; examples; mapping to DiaSorin categories; harmonization action plan."
+    },
+    {
+        "Macro Category": "Service Traceability System",
+        "Item": "Data Extraction",
+        "Definition": "Perform the data extraction for all field service activities: including service interventions and SP usage (at least the last two years, if possible).\nEvaluate whether or not it can be converted into numbers.\nKPIs calculation: MTBF, MTBV, SDRR and MTTR.\nHCI (High Cost Instrument) and HSI (High Service Instrument) analysis.",
+        "Needed In Advance": "In case data can be extracted, complete the following prior the assessment:\nFill the KPIs file provided by Diasorin (done by the distributor).\nProvide the extraction all SPs used in each system in order to perform the HCI analysis: File should contain SP PN, date of replacement and SN of the analyser.\nIn case work orders are categorized via software and an extraction can be done, perform the HSI analysis (done by Diasorin).",
+        "Original Response": "Y",
+        "Original Comments": "Completed",
+        "Evidence Required": "Service activity extraction; SP usage by SN/date/PN; KPI file; HCI/HSI dataset."
+    },
+    {
+        "Macro Category": "Service Traceability System",
+        "Item": "Activity Tracker",
+        "Definition": "How does the distributor follow up the periodic activities, updates and retrofits?\nPercentage of completion for ongoing and expired retrofits and software updates.\nPlace Pos for the pending retrofits.\nAction plan for the SW updates.",
+        "Needed In Advance": "",
+        "Original Response": "Y",
+        "Original Comments": "Follow-up call by the area engineer or applications person",
+        "Evidence Required": "Retrofit/SW update tracker; completion percentage; pending PO list; action plan."
+    }
+]
 
 # ------------------------------------------------------------
 # CSS / UI
@@ -292,9 +833,13 @@ def read_table(uploaded_file) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_distributors() -> pd.DataFrame:
     path = DISTRIBUTORS_LATAM_PATH if DISTRIBUTORS_LATAM_PATH.exists() else DISTRIBUTORS_MASTER_PATH
-    if not path.exists():
-        return pd.DataFrame(columns=["Distributor name", "Country", "World Region", "Commercial Region"])
-    df = pd.read_csv(path, dtype=str).fillna("")
+    if path.exists():
+        try:
+            df = pd.read_csv(path, dtype=str).fillna("")
+        except Exception:
+            df = pd.DataFrame(FALLBACK_DISTRIBUTORS).fillna("")
+    else:
+        df = pd.DataFrame(FALLBACK_DISTRIBUTORS).fillna("")
     required = ["Distributor name", "Country", "World Region", "Commercial Region"]
     for c in required:
         if c not in df.columns:
@@ -305,19 +850,15 @@ def load_distributors() -> pd.DataFrame:
     return df.sort_values(["Distributor name", "Country"])
 
 
-FALLBACK_QUESTIONS = [
-    ["Customer Visit", "Customer 1", "Visit a customer where the PM has been performed in the instrument in the last 3 months (LXL)", "", "Y", "Fundacion Santa Fe de Bogotá LXL/LAS 2210100729"],
-    ["Customer Visit", "Customer 2", "VIP customer visit.", "", "P", "Herasmo Meoz Cucuta LXL 2210007457-2210007453"],
-    ["Customer Visit", "Customer 3", "System with the most amount of failures.", "", "P", "Higuera Escalante Bucaramanga LXS 2290000331"],
-    ["Service Tools", "Lubrication Kits", "How many kits are available in the stock?\nHow many FSEs are in possession of a full kit? (Lubrication Kit and Super lube).\nDefine the amount of kits to be ordered.", "Data to be compiled before the assessment:\n# of fits available in stock.\n# of kits already provided to FSEs.", "Y", "3 kits in stock, 4 Superlub kits, 5 engineers with kits in their tool case, no need to order"],
-]
-
 @st.cache_data(show_spinner=False)
 def load_corporate_questions() -> pd.DataFrame:
     if CORPORATE_QUESTIONS_PATH.exists():
-        df = pd.read_csv(CORPORATE_QUESTIONS_PATH, dtype=str).fillna("")
+        try:
+            df = pd.read_csv(CORPORATE_QUESTIONS_PATH, dtype=str).fillna("")
+        except Exception:
+            df = pd.DataFrame(FALLBACK_CORPORATE_QUESTIONS).fillna("")
     else:
-        df = pd.DataFrame(FALLBACK_QUESTIONS, columns=["Macro Category", "Item", "Definition", "Needed In Advance", "Original Response", "Original Comments"])
+        df = pd.DataFrame(FALLBACK_CORPORATE_QUESTIONS).fillna("")
     # standard columns
     expected = ["Macro Category", "Item", "Definition", "Needed In Advance", "Original Response", "Original Comments", "Evidence Required"]
     for c in expected:
@@ -440,7 +981,7 @@ def save_uploaded_evidence(distributor: str, period: str, qid: str, category: st
 def distributor_selector() -> Dict:
     dist_df = load_distributors()
     if dist_df.empty:
-        st.sidebar.error("No encontré data/distributors_master_latam.csv ni data/distributors_master.csv")
+        st.sidebar.error("No hay distribuidores disponibles. Revisa la data maestra o el fallback interno.")
         return {"distributor": "", "country": "", "world_region": "", "commercial_region": "", "period": ""}
 
     distributors = sorted(dist_df["Distributor name"].dropna().unique().tolist())
