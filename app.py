@@ -35,6 +35,7 @@ EVIDENCE_DIR = BASE_DIR / "evidence"
 DB_PATH = DATA_DIR / "service_assessment.db"
 DISTRIBUTOR_MASTER_PATH = DATA_DIR / "distributors_master.csv"
 DISTRIBUTOR_MASTER_LATAM_PATH = DATA_DIR / "distributors_master_latam.csv"
+CORPORATE_TEMPLATE_PATH = DATA_DIR / "corporate_assessment_questions.csv"
 DATA_DIR.mkdir(exist_ok=True)
 EVIDENCE_DIR.mkdir(exist_ok=True)
 
@@ -957,8 +958,39 @@ def init_corporate_db() -> None:
     conn.commit(); conn.close()
 
 
+@st.cache_data(show_spinner=False)
+def load_corporate_questions() -> pd.DataFrame:
+    """Carga las preguntas originales del formato corporativo.
+
+    La fuente principal es data/corporate_assessment_questions.csv, generado desde
+    la hoja Definitions del Excel original de Corporate. Si el archivo no existe,
+    usa el respaldo embebido en el código para que la app no se caiga.
+    """
+    required_cols = ["Macro Category", "Item", "Definition", "Needed In Advance", "Evidence Required"]
+    if CORPORATE_TEMPLATE_PATH.exists():
+        try:
+            df = pd.read_csv(CORPORATE_TEMPLATE_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+            # Normaliza posibles variantes de encabezado del Excel original.
+            rename_map = {
+                "Needed In advance": "Needed In Advance",
+                "Needed in advance": "Needed In Advance",
+                "Needed In Advance": "Needed In Advance",
+            }
+            df = df.rename(columns=rename_map)
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df[required_cols + [c for c in df.columns if c not in required_cols]]
+            df = df[(df["Macro Category"].astype(str).str.strip() != "") & (df["Item"].astype(str).str.strip() != "")]
+            if not df.empty:
+                return df.reset_index(drop=True)
+        except Exception:
+            pass
+    return pd.DataFrame(DEFAULT_CORPORATE_ITEMS)
+
+
 def corporate_template_df() -> pd.DataFrame:
-    df = pd.DataFrame(DEFAULT_CORPORATE_ITEMS)
+    df = load_corporate_questions().copy()
     counts = df["Macro Category"].value_counts().to_dict()
     df["Response"] = "N - No cumple"
     df["Score"] = 0.0
@@ -1275,36 +1307,242 @@ def page_corporate_assessment():
                     st.session_state["corporate_assessment_id"] = int(selected_id)
                     st.success(f"Assessment {selected_id} cargado.")
 
+def filter_isrlive_by_selected_distributor(raw_df: pd.DataFrame, selected_distributor: str, selected_country: str) -> Tuple[pd.DataFrame, Dict]:
+    """Filtra el export de ISR-Live para analizar únicamente el distribuidor seleccionado."""
+    std, mapping = standardize(raw_df)
+    info = {
+        "selected_distributor": selected_distributor,
+        "selected_country": selected_country,
+        "distributor_column": mapping.get("distributor"),
+        "country_column": mapping.get("country"),
+        "original_rows": int(len(raw_df)),
+        "filtered_rows": 0,
+        "available_distributors": [],
+        "available_countries": [],
+        "warning": "",
+    }
+    if mapping.get("distributor") is None:
+        info["warning"] = "No detecté una columna de distribuidor en el archivo ISR-Live. No puedo filtrar de forma segura por distribuidor."
+        return raw_df.iloc[0:0].copy(), info
+
+    dist_norm = std["__distributor"].apply(lambda x: norm(x))
+    country_norm = std["__country"].apply(lambda x: norm(x)) if mapping.get("country") else pd.Series([""] * len(std), index=std.index)
+    selected_dist_norm = norm(selected_distributor)
+    selected_country_norm = norm(selected_country)
+
+    info["available_distributors"] = sorted([x for x in std["__distributor"].dropna().astype(str).unique().tolist() if clean_text(x)])
+    info["available_countries"] = sorted([x for x in std["__country"].dropna().astype(str).unique().tolist() if clean_text(x)])
+
+    mask_dist = dist_norm == selected_dist_norm
+    if not mask_dist.any() and selected_dist_norm:
+        # Fallback flexible para variaciones menores de nombre.
+        mask_dist = dist_norm.str.contains(re.escape(selected_dist_norm), na=False) | pd.Series(
+            [selected_dist_norm in x for x in dist_norm], index=std.index
+        )
+
+    if selected_country_norm and mapping.get("country"):
+        mask_country = country_norm == selected_country_norm
+        combined = mask_dist & mask_country
+        # Si el país no coincide por formato, conserva al menos el filtro de distribuidor.
+        mask = combined if combined.any() else mask_dist
+    else:
+        mask = mask_dist
+
+    filtered = raw_df.loc[mask].copy()
+    info["filtered_rows"] = int(len(filtered))
+    if filtered.empty:
+        info["warning"] = f"No encontré registros para el distribuidor seleccionado: {selected_distributor}."
+    return filtered, info
+
+
+def render_isrlive_scope_metrics(result: pd.DataFrame, selected_distributor: str, selected_country: str, period_label: str):
+    if result.empty:
+        return
+    total = int(len(result))
+    active = int((result["active"] == True).sum()) if "active" in result.columns else 0
+    inactive = total - active
+    mc_complete = int((result["machine_config"].apply(lambda x: not is_bad_machine_config(x))).sum())
+    mc_missing = total - mc_complete
+    models = int(result["instrument_type"].replace("", np.nan).dropna().nunique()) if "instrument_type" in result.columns else 0
+
+    st.markdown(f"""
+    <div class='glass-card'>
+        <b>Scope ISR-Live:</b> {selected_distributor} · {selected_country} · {period_label}<br>
+        <span class='muted'>El análisis y las gráficas corresponden únicamente a los registros filtrados para este distribuidor.</span>
+    </div>
+    """, unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Base instalada filtrada", total)
+    c2.metric("Instrumentos activos", active)
+    c3.metric("No activos / Scrapped / Stock", inactive)
+    c4.metric("Machine Config completa", mc_complete)
+    c5.metric("Modelos detectados", models)
+    if mc_missing > 0:
+        st.warning(f"Hay {mc_missing} instrumento(s) con Machine Configuration vacía, inválida o con valores no aceptados.")
+    else:
+        st.success("Machine Configuration completa para todos los registros filtrados.")
+
+
+def render_isrlive_operational_charts(result: pd.DataFrame):
+    """Gráficas operativas solicitadas: Machine Configuration, base instalada por modelo y status."""
+    if result.empty:
+        return
+    work = result.copy()
+    work["Instrument Model"] = work["instrument_type"].replace("", "Unknown").fillna("Unknown")
+    work["Instrument Status"] = work["instrument_status"].replace("", "Status not reported").fillna("Status not reported")
+    work["Machine Configuration Status"] = work["machine_config"].apply(
+        lambda x: "Complete" if not is_bad_machine_config(x) else "Incomplete / invalid"
+    )
+
+    st.markdown("### Dashboard ISR-Live del distribuidor seleccionado")
+    c1, c2 = st.columns(2)
+    with c1:
+        base_model = work.groupby("Instrument Model", dropna=False).size().reset_index(name="Installed Base")
+        fig = px.bar(
+            base_model,
+            x="Instrument Model",
+            y="Installed Base",
+            text="Installed Base",
+            title="Base instalada por modelo de equipo",
+        )
+        fig.update_layout(height=390, xaxis_title="Modelo", yaxis_title="Cantidad")
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        mc = work.groupby(["Instrument Model", "Machine Configuration Status"], dropna=False).size().reset_index(name="Count")
+        fig = px.bar(
+            mc,
+            x="Instrument Model",
+            y="Count",
+            color="Machine Configuration Status",
+            text="Count",
+            barmode="stack",
+            title="Machine Configuration por modelo",
+        )
+        fig.update_layout(height=390, xaxis_title="Modelo", yaxis_title="Cantidad")
+        st.plotly_chart(fig, use_container_width=True)
+
+    status_model = work.groupby(["Instrument Status", "Instrument Model"], dropna=False).size().reset_index(name="Count")
+    fig = px.bar(
+        status_model,
+        x="Instrument Status",
+        y="Count",
+        color="Instrument Model",
+        text="Count",
+        barmode="stack",
+        title="Estado de los instrumentos por modelo: rutina, scrapped, stock, removed, etc.",
+    )
+    fig.update_layout(height=430, xaxis_title="Instrument Status", yaxis_title="Cantidad")
+    st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("Detalle de Machine Configuration incompleta / inválida", expanded=False):
+        bad = work[work["Machine Configuration Status"] == "Incomplete / invalid"].copy()
+        if bad.empty:
+            st.success("No hay registros con Machine Configuration inválida en el distribuidor seleccionado.")
+        else:
+            st.dataframe(
+                bad[["serial_number", "instrument_type", "customer_name", "country", "city", "instrument_status", "machine_config", "software_version"]].rename(columns={
+                    "serial_number": "Serial Number",
+                    "instrument_type": "Instrument",
+                    "customer_name": "Customer",
+                    "instrument_status": "Instrument Status",
+                    "machine_config": "Machine Configuration",
+                    "software_version": "Software Version",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 def page_isrlive():
-    st.subheader("1. Evaluación ISR-Live"); st.write("Carga el CSV o Excel descargado directamente desde ISR-Live.")
-    target_sw = sidebar_config(); only_active = st.toggle("Evaluar únicamente instrumentos activos / en rutina", value=True)
+    st.subheader("1. Evaluación ISR-Live")
+    st.write("Carga el CSV o Excel descargado directamente desde ISR-Live. El análisis se filtra únicamente por el distribuidor seleccionado.")
+
+    st.markdown("### Scope del análisis")
+    selected_distributor, selected_country, world_region, commercial_region = distributor_country_selector(prefix="isrlive")
+    period_start, period_end, period_label = period_selector(prefix="isrlive")
+
+    target_sw = sidebar_config()
+    only_active = st.toggle(
+        "Excluir instrumentos no activos del score técnico",
+        value=True,
+        help="Las gráficas de base instalada y status siguen mostrando todo el distribuidor filtrado. Esta opción solo afecta el score técnico y el plan de acción.",
+    )
     uploaded = st.file_uploader("Subir archivo ISR-Live", type=["csv","xlsx","xls"], accept_multiple_files=False)
     if not uploaded:
-        st.info("Sube un archivo para iniciar la evaluación."); hist = load_history()
-        if not hist.empty: st.markdown("### Histórico de evaluaciones guardadas"); st.dataframe(hist, use_container_width=True, hide_index=True)
+        st.info("Sube un archivo para iniciar la evaluación.")
+        hist = load_history()
+        if not hist.empty:
+            st.markdown("### Histórico de evaluaciones guardadas")
+            st.dataframe(hist, use_container_width=True, hide_index=True)
         return
-    try: raw_df = read_table(uploaded)
-    except Exception as exc: st.error(f"No pude leer el archivo: {exc}"); return
-    if raw_df.empty: st.warning("El archivo está vacío."); return
-    result, summary, mapping = evaluate(raw_df, target_sw, only_active=only_active); plan = action_plan(result)
-    st.session_state["current_result"] = result; st.session_state["current_summary"] = summary; st.session_state["current_plan"] = plan; st.session_state["current_raw"] = raw_df; st.session_state["current_filename"] = uploaded.name
-    render_metrics(summary); render_charts(result)
-    tabs = st.tabs(["Resultados", "Plan de acción", "Columnas detectadas", "Datos originales", "Guardar / Exportar"])
-    with tabs[0]: st.dataframe(display_result_df(result), use_container_width=True, hide_index=True)
-    with tabs[1]: st.success("No se generaron acciones abiertas con las reglas actuales.") if plan.empty else st.dataframe(plan, use_container_width=True, hide_index=True)
-    with tabs[2]: st.dataframe(pd.DataFrame([{"Campo esperado": k, "Columna detectada": v or "No detectada"} for k,v in mapping.items()]), use_container_width=True, hide_index=True)
-    with tabs[3]: st.dataframe(raw_df, use_container_width=True, hide_index=True)
+
+    try:
+        raw_df = read_table(uploaded)
+    except Exception as exc:
+        st.error(f"No pude leer el archivo: {exc}")
+        return
+    if raw_df.empty:
+        st.warning("El archivo está vacío.")
+        return
+
+    filtered_raw, filter_info = filter_isrlive_by_selected_distributor(raw_df, selected_distributor, selected_country)
+    if filter_info.get("warning"):
+        st.error(filter_info["warning"])
+        if filter_info.get("available_distributors"):
+            with st.expander("Distribuidores detectados en el archivo cargado"):
+                st.dataframe(pd.DataFrame({"Distributor in file": filter_info["available_distributors"]}), use_container_width=True, hide_index=True)
+        return
+
+    st.caption(
+        f"Archivo cargado: {len(raw_df)} filas · Filtrado para {selected_distributor}: {len(filtered_raw)} filas · "
+        f"Columna distribuidor detectada: {filter_info.get('distributor_column') or 'No detectada'}"
+    )
+
+    result, summary, mapping = evaluate(filtered_raw, target_sw, only_active=only_active)
+    plan = action_plan(result)
+    st.session_state["current_result"] = result
+    st.session_state["current_summary"] = summary
+    st.session_state["current_plan"] = plan
+    st.session_state["current_raw"] = filtered_raw
+    st.session_state["current_filename"] = uploaded.name
+    st.session_state["current_distributor"] = selected_distributor
+    st.session_state["current_country"] = selected_country
+    st.session_state["current_period"] = period_label
+
+    render_isrlive_scope_metrics(result, selected_distributor, selected_country, period_label)
+    render_isrlive_operational_charts(result)
+
+    tabs = st.tabs(["Resultados detallados", "Plan de acción", "Columnas detectadas", "Datos filtrados", "Guardar / Exportar"])
+    with tabs[0]:
+        st.dataframe(display_result_df(result), use_container_width=True, hide_index=True)
+    with tabs[1]:
+        st.success("No se generaron acciones abiertas con las reglas actuales.") if plan.empty else st.dataframe(plan, use_container_width=True, hide_index=True)
+    with tabs[2]:
+        st.dataframe(pd.DataFrame([{"Campo esperado": k, "Columna detectada": v or "No detectada"} for k,v in mapping.items()]), use_container_width=True, hide_index=True)
+    with tabs[3]:
+        st.dataframe(filtered_raw, use_container_width=True, hide_index=True)
+        with st.expander("Ver archivo original completo sin filtrar"):
+            st.dataframe(raw_df, use_container_width=True, hide_index=True)
     with tabs[4]:
         col1,col2 = st.columns(2)
         with col1:
             if st.button("Guardar evaluación en base local", type="primary"):
-                aid = save_assessment(result, summary, uploaded.name); st.session_state["assessment_id"] = aid; st.success(f"Evaluación guardada. ID interno: {aid}")
+                aid = save_assessment(result, summary, uploaded.name)
+                st.session_state["assessment_id"] = aid
+                st.success(f"Evaluación guardada. ID interno: {aid}")
         with col2:
-            excel = to_excel_bytes({"Assessment Results": display_result_df(result), "Action Plan": plan, "Raw ISR-Live": raw_df})
-            st.download_button("Descargar Excel", data=excel, file_name=f"Service_Assessment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            excel = to_excel_bytes({
+                "Assessment Results": display_result_df(result),
+                "Action Plan": plan,
+                "Filtered ISR-Live": filtered_raw,
+                "Raw ISR-Live": raw_df,
+            })
+            st.download_button("Descargar Excel", data=excel, file_name=f"Service_Assessment_{safe_filename(selected_distributor)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         if REPORTLAB_OK:
-            pdf = make_pdf_report(result, summary, plan); st.download_button("Descargar PDF ejecutivo", data=pdf, file_name=f"Service_Assessment_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
-        else: st.warning("Para PDF instala reportlab. Ya está incluido en requirements.txt.")
+            pdf = make_pdf_report(result, summary, plan)
+            st.download_button("Descargar PDF ejecutivo", data=pdf, file_name=f"Service_Assessment_Report_{safe_filename(selected_distributor)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
+        else:
+            st.warning("Para PDF instala reportlab. Ya está incluido en requirements.txt.")
 
 def evidence_form(sn: str):
     st.markdown("### Evidencia de visita técnica")
