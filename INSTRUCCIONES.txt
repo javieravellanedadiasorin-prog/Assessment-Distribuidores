@@ -1,0 +1,26 @@
+INSTRUCCIONES - LATAM Service Assessment App v3
+
+1. Descomprime el ZIP.
+2. Copia todo el contenido en:
+   C:\Users\javier.avellaneda\OneDrive - Diasorin-Luminex\Documentos\Base Instalada\Assesment App
+
+3. Ejecuta run_app.bat.
+
+4. En la pestaña "Assessment corporativo":
+   - Selecciona el distribuidor desde la lista desplegable.
+   - El país se filtra automáticamente según el distribuidor.
+   - Selecciona fecha de inicio y fecha de finalización del periodo evaluado.
+   - Completa la matriz editable.
+   - Carga evidencia por ítem.
+   - Exporta Excel o guarda el assessment.
+
+5. En la pestaña "Evaluación ISR-Live":
+   - Carga el CSV o Excel descargado directamente de ISR-Live.
+   - Revisa hallazgos, score y plan de acción.
+   - Aplica los hallazgos al assessment corporativo cuando corresponda.
+
+6. Para GitHub:
+   - Abre una terminal en la carpeta de la app.
+   - Usa los comandos del README.md.
+
+Nota: data/service_assessment.db y evidence/ no deben subirse a GitHub.
