@@ -1,710 +1,240 @@
 # ============================================================
 # LATAM Distributor Service Excellence Assessment
-# Version 3.3 - Corporate Assessment Cards + ISR-Live Focus
+# Emergency Stable Build v3.5
+# ------------------------------------------------------------
+# Objetivo de esta versión:
+# 1) Mostrar SIEMPRE todas las preguntas del formato corporativo original.
+# 2) Permitir evidencia por cada pregunta.
+# 3) Analizar ISR-Live SOLO para el distribuidor seleccionado.
+# 4) Mostrar únicamente gráficos ISR-Live solicitados:
+#    - Base instalada por modelo.
+#    - Machine Configuration completa/incompleta por modelo.
+#    - Instrument Status por modelo.
 # ============================================================
 
 from __future__ import annotations
 
-import base64
 import io
 import json
-import os
 import re
-import sqlite3
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-try:
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak
-    REPORTLAB_OK = True
-except Exception:
-    REPORTLAB_OK = False
 
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
+# ============================================================
+# Configuración base
+# ============================================================
+
+APP_VERSION = "v3.5 - Emergency Stable Build"
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = BASE_DIR / "evidence"
-OUTPUT_DIR = BASE_DIR / "outputs"
-DB_PATH = DATA_DIR / "assessment_app.db"
-DATA_DIR.mkdir(exist_ok=True)
 EVIDENCE_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
 
-CORPORATE_QUESTIONS_PATH = DATA_DIR / "corporate_assessment_questions.csv"
-DISTRIBUTORS_LATAM_PATH = DATA_DIR / "distributors_master_latam.csv"
-DISTRIBUTORS_MASTER_PATH = DATA_DIR / "distributors_master.csv"
 
-APP_TITLE = "LATAM Distributor Service Excellence Assessment"
-APP_VERSION = "v3.4"
+# ============================================================
+# Preguntas originales del formato corporativo
+# ============================================================
 
-RESPONSE_SCORE = {
-    "Y - Cumple": 1.0,
-    "P - Parcial": 0.5,
-    "N - No cumple": 0.0,
-    "NA - No aplica": np.nan,
-}
+CORPORATE_QUESTIONS = [
+    # Installed Base Certification
+    {"id": "IBC-01", "category": "Installed Base Certification", "question": "Installed Base Update", "evidence": "Carta firmada / export ISR-Live actualizado / evidencia de certificación."},
+    {"id": "IBC-02", "category": "Installed Base Certification", "question": "System Configuration", "evidence": "CSV ISR-Live o screenshot donde se vea Machine Configuration completa."},
+    {"id": "IBC-03", "category": "Installed Base Certification", "question": "Customer Data", "evidence": "Datos de cliente completos: nombre, ciudad, país, dirección si aplica."},
+    {"id": "IBC-04", "category": "Installed Base Certification", "question": "System Status", "evidence": "Estado actualizado del instrumento: In routine, Scrapped, Warehouse, Demo, etc."},
+    {"id": "IBC-05", "category": "Installed Base Certification", "question": "PM Planner", "evidence": "Evidencia del PM Planner actualizado."},
+    {"id": "IBC-06", "category": "Installed Base Certification", "question": "PM Completion Evaluation (%)", "evidence": "Reporte de cumplimiento de PM / service reports."},
+    {"id": "IBC-07", "category": "Installed Base Certification", "question": "PM Plan", "evidence": "Plan de mantenimiento preventivo vigente."},
+    {"id": "IBC-08", "category": "Installed Base Certification", "question": "PM Kit Stock", "evidence": "Inventario de PM kits disponible para la base instalada."},
 
-RISK_ORDER = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    # Contact List
+    {"id": "CL-01", "category": "Contact List", "question": "Contacts", "evidence": "Lista actualizada de contactos técnicos, aplicaciones, logística y gerencia."},
+    {"id": "CL-02", "category": "Contact List", "question": "FSE and AS Training Status", "evidence": "Matriz de entrenamiento/certificación de FSE y Applications Specialist."},
+    {"id": "CL-03", "category": "Contact List", "question": "ISR - Live", "evidence": "Usuarios activos y correctos en ISR-Live."},
 
-CATEGORY_WEIGHTS = {
-    "Installed Base Certification": 0.20,
-    "Contact List": 0.10,
-    "DiaSorin Accounts Optimization": 0.10,
-    "Technical Evaluation": 0.15,
-    "Service Tools": 0.15,
-    "Stock Level": 0.10,
-    "Service Traceability System": 0.10,
-    "Customer Visit": 0.10,
-}
+    # DiaSorin Accounts Optimization
+    {"id": "DAO-01", "category": "DiaSorin Accounts Optimization", "question": "Bomgar", "evidence": "Listado de cuentas BeyondTrust/Bomgar activas y usuarios correctos."},
+    {"id": "DAO-02", "category": "DiaSorin Accounts Optimization", "question": "TCM", "evidence": "Validación de accesos TCM activos/correctos."},
+    {"id": "DAO-03", "category": "DiaSorin Accounts Optimization", "question": "Apparound", "evidence": "Usuarios Apparound activos/correctos."},
+    {"id": "DAO-04", "category": "DiaSorin Accounts Optimization", "question": "Filezilla", "evidence": "Validación de acceso FTPS/FileZilla cuando aplique."},
+    {"id": "DAO-05", "category": "DiaSorin Accounts Optimization", "question": "ISR - Live", "evidence": "Validación de usuarios ISR-Live activos/correctos."},
+    {"id": "DAO-06", "category": "DiaSorin Accounts Optimization", "question": "RGA Manager", "evidence": "Usuarios activos y evidencia de uso correcto de RGA Manager."},
 
-INVALID_MC_VALUES = {
-    "", "-", "--", "n/a", "na", "nan", "none", "null", "no disponible",
-    "data not available", "data no available", "data no disponible", "not available",
-    "dont know", "don't know", "do not know", "unknown", "not done", "no hecho",
-    "sin informacion", "sin información", "pending", "pendiente", "tbc", "to be checked",
+    # Technical Evaluation
+    {"id": "TE-01", "category": "Technical Evaluation", "question": "FSEs", "evidence": "Resultados de exámenes, certificaciones, matriz técnica y brechas."},
+    {"id": "TE-02", "category": "Technical Evaluation", "question": "Lead FSE", "evidence": "Validación del Lead FSE, certificación y capacidad de escalación."},
+
+    # Service Tools
+    {"id": "ST-01", "category": "Service Tools", "question": "Lubrication Kits", "evidence": "Inventario de lubrication kits y asignación por ingeniero."},
+    {"id": "ST-02", "category": "Service Tools", "question": "System Dedicated Tools", "evidence": "Inventario de dedicated tools por plataforma."},
+    {"id": "ST-03", "category": "Service Tools", "question": "Service Tools", "evidence": "Inventario general de herramientas de servicio."},
+    {"id": "ST-04", "category": "Service Tools", "question": "Bomgar", "evidence": "Evidencia de instalación BeyondTrust/Bomgar en instrumentos activos."},
+
+    # Stock Level
+    {"id": "SL-01", "category": "Stock Level", "question": "Data Extraction", "evidence": "Export del inventario de repuestos del distribuidor."},
+    {"id": "SL-02", "category": "Stock Level", "question": "Analysis", "evidence": "Análisis de stock vs carstock, consumo, faltantes y partes críticas."},
+
+    # Service Traceability System
+    {"id": "STS-01", "category": "Service Traceability System", "question": "Traceability Tool", "evidence": "Herramienta usada para trazabilidad: CRM, ERP, Odoo, sistema interno, etc."},
+    {"id": "STS-02", "category": "Service Traceability System", "question": "Service Order Categorization", "evidence": "Evidencia de categorización de órdenes de servicio."},
+    {"id": "STS-03", "category": "Service Traceability System", "question": "Data Extraction", "evidence": "Capacidad de extraer reportes de actividades de servicio."},
+    {"id": "STS-04", "category": "Service Traceability System", "question": "Activity Tracker", "evidence": "Tracker de actividades, seguimiento de visitas y pendientes."},
+
+    # Customer Visit
+    {"id": "CV-01", "category": "Customer Visit", "question": "Customer 1", "evidence": "Evidencia de visita técnica al cliente 1: fotos, service report, hallazgos."},
+    {"id": "CV-02", "category": "Customer Visit", "question": "Customer 2", "evidence": "Evidencia de visita técnica al cliente 2: fotos, service report, hallazgos."},
+    {"id": "CV-03", "category": "Customer Visit", "question": "Customer 3", "evidence": "Evidencia de visita técnica al cliente 3: fotos, service report, hallazgos."},
+]
+
+
+FALLBACK_DISTRIBUTORS = [
+    {"Distributor name": "ANNAR", "Country": "Colombia"},
+    {"Distributor name": "Bio-Nuclear", "Country": "Dominican Republic"},
+    {"Distributor name": "Capris", "Country": "Costa Rica"},
+    {"Distributor name": "QLS", "Country": "Panama"},
+    {"Distributor name": "Grupo Bios", "Country": "Chile"},
+    {"Distributor name": "Diagnóstica Capris Guatemala", "Country": "Guatemala"},
+    {"Distributor name": "Diamed Guatemala", "Country": "Guatemala"},
+    {"Distributor name": "ARSAL", "Country": "El Salvador"},
+    {"Distributor name": "Biotec del Paraguay", "Country": "Paraguay"},
+    {"Distributor name": "Cienvar", "Country": "Venezuela"},
+    {"Distributor name": "WM Argentina", "Country": "Argentina"},
+    {"Distributor name": "Wiener Lab", "Country": "Uruguay"},
+    {"Distributor name": "Simed Ecuador", "Country": "Ecuador"},
+    {"Distributor name": "Simed Perú", "Country": "Peru"},
+    {"Distributor name": "Diagnóstico UAL", "Country": "Peru"},
+    {"Distributor name": "Biotec del Perú", "Country": "Peru"},
+    {"Distributor name": "Islalab", "Country": "Puerto Rico"},
+    {"Distributor name": "Diamed Miami", "Country": "United States"},
+]
+
+INVALID_MACHINE_CONFIG_VALUES = {
+    "", "-", "--", "n/a", "na", "nan", "none", "null", "no",
+    "not available", "data not available", "data no available",
+    "data no disponible", "no disponible", "sin informacion", "sin información",
+    "dont know", "don't know", "do not know", "unknown", "not done",
+    "no hecho", "pendiente", "to be checked", "tbc"
 }
 
 COLUMN_SYNONYMS = {
-    "distributor": ["Distributor name", "Distributor", "Dealer", "Partner", "Distribuidor"],
+    "distributor": ["Distributor name", "Distributor", "Dealer", "Partner", "Distribuidor", "Nombre distribuidor"],
     "country": ["Country", "Pais", "País"],
-    "instrument_type": ["Instrument type", "Instrument Type", "Model", "Analyzer", "Instrument", "Tipo de instrumento"],
-    "serial_number": ["Serial number", "Serial Number", "SN", "S/N", "Serial", "Número de serie", "Numero de serie"],
-    "customer_name": ["Customer name", "Customer", "Client", "Cliente", "Nombre cliente"],
+    "instrument_type": ["Instrument type", "Instrument Type", "Model", "Analyzer", "Instrument", "Tipo de instrumento", "Modelo"],
+    "serial_number": ["Serial number", "Serial Number", "SN", "S/N", "Serial", "N° Serie", "Numero de serie", "Número de serie"],
+    "customer_name": ["Customer name", "Customer", "Client", "Hospital/Lab", "Cliente", "Nombre cliente"],
     "city": ["City", "Ciudad"],
-    "machine_config": ["Machine Configurations", "Machine Configuration", "Machine config", "Configuration", "Configuración", "Configuracion"],
-    "instrument_status": [" Instrument Status", "Instrument Status", "Status", " Estado", "Estado", "Instrument status"],
-    "software_version": ["Software version", "Software Version", "User SW", "User Software", "SW Version", "Version", "Versión software"],
-    "os_version": ["Operating System", "OS", "OS Version", "Windows version", "Windows Version", "Sistema operativo"],
-    "blood_bank": ["In Blook Bank", "In Blood Bank", "Blood Bank", "Banco de sangre", "Banco Sangre"],
+    "machine_config": ["Machine Configurations", "Machine Configuration", "Machine config", "Configuration", "Configuración", "Configuracion", "Configuración de máquina", "Configuracion de maquina"],
+    "instrument_status": ["Instrument Status", "Status", "Estado", "Estado instrumento", "Operational Status"],
+    "software_version": ["Software version", "Software Version", "User SW", "User SW Version", "SW Version", "SW", "Version", "Versión software", "Version software"],
 }
 
 
-# ------------------------------------------------------------
-# Embedded fallback data
-# ------------------------------------------------------------
-# Estos datos permiten que la app funcione aunque Streamlit Cloud no encuentre
-# los CSV dentro de /data. La app sigue intentando leer los archivos externos
-# primero; si no existen, usa estas listas internas.
-FALLBACK_DISTRIBUTORS = [
-    {
-        "Distributor name": "ARSAL",
-        "Country": "El Salvador",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "ARSAL",
-        "Country": "El Salvador",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Annar Diagnostica Import sas",
-        "Country": "Colombia",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Bio-Nuclear",
-        "Country": "Dominican Republic",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Biodiz",
-        "Country": "Peru",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Biotec del Paraguay, S.R.L.",
-        "Country": "Paraguay",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Capris Médica",
-        "Country": "Costa Rica",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Caribbean Medical Supplies inc.",
-        "Country": "Guyana",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed (Guatemala)",
-        "Country": "Guatemala",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed (Guatemala)",
-        "Country": "Guatemala",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Aruba",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Bahamas",
-        "World Region": "North America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Barbados",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Caribbean - Central America - Florida",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Cayman Islands",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Curacao",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Grenada",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "St. Lucia",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "Trinidad and Tobago",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "DiaMed Caribbean",
-        "Country": "US based",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Diagnostico UAL",
-        "Country": "Peru",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Diagnostika Capris",
-        "Country": "Guatemala",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Dimex Medica",
-        "Country": "Honduras",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Export LATAM",
-        "Country": "Colombia",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Grupo Bios",
-        "Country": "Chile",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Infotec",
-        "Country": "Paraguay",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Isla Lab Products LLC",
-        "Country": "Bahamas",
-        "World Region": "North America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Isla Lab Products LLC",
-        "Country": "Caribbean - Central America - Florida",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Isla Lab Products LLC",
-        "Country": "Puerto Rico",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Isla Lab Products LLC",
-        "Country": "Puerto Rico",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Lab IVD Uruguay SA (Wiener lab group)",
-        "Country": "Uruguay",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Laboratories Cienvar S.A.",
-        "Country": "Venezuela",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Laboratorio Livio Barnafi",
-        "Country": "Chile",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "QLS PANAMA",
-        "Country": "Panama",
-        "World Region": "Central America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "QUIMIOLAB",
-        "Country": "Colombia",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Referencia Laboratorio Clini",
-        "Country": "Dominican Republic",
-        "World Region": "The Caribbean",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Simed (Ecuador)",
-        "Country": "Ecuador",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "Simed (Peru)",
-        "Country": "Peru",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "WM Argentina S.A.",
-        "Country": "Argentina",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    },
-    {
-        "Distributor name": "WP Biomed",
-        "Country": "Peru",
-        "World Region": "South America",
-        "Commercial Region": "LATAM"
-    }
-]
+# ============================================================
+# Estilos
+# ============================================================
 
-FALLBACK_CORPORATE_QUESTIONS = [
-    {
-        "Macro Category": "Customer Visit",
-        "Item": "Customer 1",
-        "Definition": "Visit a customer where the PM has been performed in the instrument in the last 3 months (LXL)",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "Fundacion Santa Fe de Bogotá LXL/LAS 2210100729",
-        "Evidence Required": "Visit report; photos; PM evidence; instrument SN; findings and action plan."
-    },
-    {
-        "Macro Category": "Customer Visit",
-        "Item": "Customer 2",
-        "Definition": "VIP customer visit.",
-        "Needed In Advance": "",
-        "Original Response": "P",
-        "Original Comments": "Herasmo Meoz Cucuta LXL 2210007457-2210007453",
-        "Evidence Required": "Visit report; photos; customer feedback; instrument SN; pending actions."
-    },
-    {
-        "Macro Category": "Customer Visit",
-        "Item": "Customer 3",
-        "Definition": "System with the most amount of failures.",
-        "Needed In Advance": "",
-        "Original Response": "P",
-        "Original Comments": "Higuera Escalante Bucaramanga LXS 2290000331",
-        "Evidence Required": "Failure history; troubleshooting evidence; visit report; corrective action plan."
-    },
-    {
-        "Macro Category": "Service Tools",
-        "Item": "Lubrication Kits",
-        "Definition": "How many kits are available in the stock?\nHow many FSEs are in possession of a full kit? (Lubrication Kit and Super lube).\nDefine the amount of kits to be ordered.",
-        "Needed In Advance": "Data to be compiled before the assessment:\n# of fits available in stock.\n# of kits already provided to FSEs.",
-        "Original Response": "Y",
-        "Original Comments": "3 kits in stock, 4 Superlub kits, 5 engineers with kits in their tool case, no need to order",
-        "Evidence Required": "Tool inventory; photos; kit assignment list by FSE; gap/order list."
-    },
-    {
-        "Macro Category": "Service Tools",
-        "Item": "System Dedicated Tools",
-        "Definition": "How many set of tools are available in the stock?\nHow many FSEs are in possession of a full set? (depending on the systems avaialble in the country).\nDefine the amount of sets to be ordered.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "2 dedicated tools in the engineer's toolbox, need to order 2 kits",
-        "Evidence Required": "Dedicated tool inventory by platform; photos; FSE assignment list; gap/order list."
-    },
-    {
-        "Macro Category": "Service Tools",
-        "Item": "Service Tools",
-        "Definition": "Evaluate the type of tools used by the FSEs.\nAre they in possession of all the tools needed to service the systems?\nScrewdrivers (different sizes and heads), allen keys (T and L shapped, both flat and rounded heads), are the allen keys milimetric or standard, etc.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "General tool inventory; photos; missing tools list; corrective plan."
-    },
-    {
-        "Macro Category": "Service Tools",
-        "Item": "Bomgar",
-        "Definition": "How many systems are connected to bomgar compared to the whole installed base?\nSN Missing and reason why the system is not connected to Bomgar.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "36  in routine, 27 have BeyondTrust, all instruments will be connected by Dec. 2025",
-        "Evidence Required": "Bomgar/BeyondTrust installed base report; missing SN list; reason and action plan."
-    },
-    {
-        "Macro Category": "Contact List",
-        "Item": "Contacts",
-        "Definition": "Get the full contact list of all relevant people working with Diasorin: email, phone number, position and responsabilities.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "Updated contact list with service, applications, logistics, management and escalation contacts."
-    },
-    {
-        "Macro Category": "Contact List",
-        "Item": "FSE and AS Training Status",
-        "Definition": "Evaluate the training status of all FSEs and ASs currently servicing DS instruments.",
-        "Needed In Advance": "",
-        "Original Response": "P",
-        "Original Comments": "Training advanced needed",
-        "Evidence Required": "Training matrix by engineer, platform, level, certification status and expiration/retraining needs."
-    },
-    {
-        "Macro Category": "Contact List",
-        "Item": "ISR - Live",
-        "Definition": "Update ISR - Live contact list.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "Screenshot or export showing updated contacts in ISR-Live."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "Installed Base Update",
-        "Definition": "Performed the installed base certification.\nGet the installed base certification format signed.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "letter signed and uploaded to Teams",
-        "Evidence Required": "Signed installed base certification letter; ISR-Live export; supporting evidence uploaded by distributor."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "System Configuration",
-        "Definition": "Update all systems: no \"data not avaialble\" nor \"don't know\" allowed to be left in the fields.",
-        "Needed In Advance": "Data needed that needs to be collected before the assessment:\nLiaison XL: PC Model, OS and User SW Version.\nLiaison XS: User SW Version.\nLQS: OS and PC Model.",
-        "Original Response": "P",
-        "Original Comments": "Information verified and reported need to complete",
-        "Evidence Required": "ISR-Live CSV showing complete Machine Configuration for every active SN; no Don't know, Data not available, Not done or blank values."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "Customer Data",
-        "Definition": "All customer data shall be reported into ISR - Live.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "Information verified against installed base and ISR Live",
-        "Evidence Required": "ISR-Live export with customer name, country, city, address and key customer fields completed."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "System Status",
-        "Definition": "Update the system status of all systems.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "verified information",
-        "Evidence Required": "ISR-Live export showing correct operational status for each system: in routine, scrapped, stock, removed, demo, etc."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "PM Planner",
-        "Definition": "ISR - Live PM Planner shall contain the information of at least the last 3 PMs performed on each system (installed and not installed, not required for new systems that have never been installed).",
-        "Needed In Advance": "Work orders of all PMs performed within the last 12 months (up until the assessment is done).",
-        "Original Response": "Y",
-        "Original Comments": "verified information",
-        "Evidence Required": "PM Planner export or screenshots; work orders for the last 12 months; evidence of last 3 PMs per applicable system."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "PM Completion Evaluation (%)",
-        "Definition": "Evaluate the % of completion of every quarter until this assessment is performed.\nDefine an action plan for overdue PMs.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "PM completion table by quarter; overdue PM list; corrective action plan."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "PM Plan",
-        "Definition": "Define a calendar with the dates when all future PMs will be performed during the rest of the year.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "PM calendar for remaining year by customer, SN, quarter and responsible FSE."
-    },
-    {
-        "Macro Category": "Installed Base Certification",
-        "Item": "PM Kit Stock",
-        "Definition": "Evalaute the amount of PM kits avaialble in the country VS the PMs to be performed during the rest of the year.",
-        "Needed In Advance": "",
-        "Original Response": "P",
-        "Original Comments": "completed",
-        "Evidence Required": "PM kit stock file; remaining PM demand; gap analysis."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "Bomgar",
-        "Definition": "Open accounts as needed.\nClose accounts as needed.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "Four accounts are shared, all four are active.",
-        "Evidence Required": "List of active BeyondTrust/Bomgar accounts; users to create; users to remove; justification."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "TCM",
-        "Definition": "",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "List of active TCM accounts; users to create/remove."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "Apparound",
-        "Definition": "",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "List of active Apparound accounts; users to create/remove."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "Filezilla",
-        "Definition": "",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "List of active FTPS/FileZilla accounts; users to create/remove."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "ISR - Live",
-        "Definition": "",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "List of active ISR-Live accounts; users to create/remove."
-    },
-    {
-        "Macro Category": "DiaSorin Accounts Optimization",
-        "Item": "RGA Manager",
-        "Definition": "",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "completed",
-        "Evidence Required": "List of active RGA Manager accounts; users to create/remove; confirmation of trained users."
-    },
-    {
-        "Macro Category": "Technical Evaluation",
-        "Item": "FSEs",
-        "Definition": "Perform the FSE evaluation to all FSEs servicing DS instruments.",
-        "Needed In Advance": "Provide the list of FSEs to take the quiz.\nComplete the quiz before the assessment is done.\nRecovery session to be done during the assessment.",
-        "Original Response": "P",
-        "Original Comments": "5 engineers not compleated the basic LXL exam",
-        "Evidence Required": "FSE assessment results; attendance list; recovery plan for failed or pending engineers."
-    },
-    {
-        "Macro Category": "Technical Evaluation",
-        "Item": "Lead FSE",
-        "Definition": "Perform the lead evaluation to the Lead FSEs.",
-        "Needed In Advance": "In case an Advanced SS Session does not take place during the visit, the following must be done:\nProvide the list of FSEs to take the quiz.\nComplete the quiz before the assessment is done.\nRecovery session to be done during the assessment.",
-        "Original Response": "Y",
-        "Original Comments": "The lead engineer must retake the exam in December 2025.",
-        "Evidence Required": "Lead FSE assessment result; advanced session evidence; retraining plan if needed."
-    },
-    {
-        "Macro Category": "Stock Level",
-        "Item": "Data Extraction",
-        "Definition": "Evaluate the way the data is extracted.\nEvaluate the outcome of the extraction: Location, link to invoice number, QTY, etc.",
-        "Needed In Advance": "Get the SP stock file for analysis before the assessment is done.",
-        "Original Response": "Y",
-        "Original Comments": "The entire distributor's spare parts inventory is managed with software called Odoo; in less than an hour they can find out what they have and where it is.",
-        "Evidence Required": "Spare parts stock file; extraction method; inventory owner; location and quantity fields."
-    },
-    {
-        "Macro Category": "Stock Level",
-        "Item": "Analysis",
-        "Definition": "Compare the current stock vs the stock level the distributor shall mantain.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "The Odoo software automatically generates the need for additional parts if they are used or if your IB increases.",
-        "Evidence Required": "Stock gap analysis versus carstock/minimum requirement; value using Option 2 when applicable."
-    },
-    {
-        "Macro Category": "Service Traceability System",
-        "Item": "Traceability Tool",
-        "Definition": "Does the distributor have a CRM Software?\nName the software used for traceability of work orders.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "ODOO ERP",
-        "Evidence Required": "Name of CRM/ERP/tool; screenshots or workflow evidence; user/process description."
-    },
-    {
-        "Macro Category": "Service Traceability System",
-        "Item": "Service Order Categorization",
-        "Definition": "Are the WO categorized by the Distributor?\nAre the categories compatible with DS's?\nEvaluate the possibility to harmonize the distributor's categories with DS's.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "categorized by volume, urgency and type of service, corrective, preventive, installation",
-        "Evidence Required": "WO category list; examples; mapping to DiaSorin categories; harmonization action plan."
-    },
-    {
-        "Macro Category": "Service Traceability System",
-        "Item": "Data Extraction",
-        "Definition": "Perform the data extraction for all field service activities: including service interventions and SP usage (at least the last two years, if possible).\nEvaluate whether or not it can be converted into numbers.\nKPIs calculation: MTBF, MTBV, SDRR and MTTR.\nHCI (High Cost Instrument) and HSI (High Service Instrument) analysis.",
-        "Needed In Advance": "In case data can be extracted, complete the following prior the assessment:\nFill the KPIs file provided by Diasorin (done by the distributor).\nProvide the extraction all SPs used in each system in order to perform the HCI analysis: File should contain SP PN, date of replacement and SN of the analyser.\nIn case work orders are categorized via software and an extraction can be done, perform the HSI analysis (done by Diasorin).",
-        "Original Response": "Y",
-        "Original Comments": "Completed",
-        "Evidence Required": "Service activity extraction; SP usage by SN/date/PN; KPI file; HCI/HSI dataset."
-    },
-    {
-        "Macro Category": "Service Traceability System",
-        "Item": "Activity Tracker",
-        "Definition": "How does the distributor follow up the periodic activities, updates and retrofits?\nPercentage of completion for ongoing and expired retrofits and software updates.\nPlace Pos for the pending retrofits.\nAction plan for the SW updates.",
-        "Needed In Advance": "",
-        "Original Response": "Y",
-        "Original Comments": "Follow-up call by the area engineer or applications person",
-        "Evidence Required": "Retrofit/SW update tracker; completion percentage; pending PO list; action plan."
-    }
-]
-
-# ------------------------------------------------------------
-# CSS / UI
-# ------------------------------------------------------------
 def inject_css() -> None:
     st.markdown(
         """
         <style>
-        .main .block-container {max-width: 1520px; padding-top: 1.1rem; padding-bottom: 2rem;}
-        div[data-testid="stMetric"] {
-            background: linear-gradient(135deg, rgba(15,23,42,.92), rgba(8,47,73,.62));
-            border: 1px solid rgba(34,211,238,.22);
-            padding: 14px 16px;
-            border-radius: 18px;
-            box-shadow: 0 12px 30px rgba(0,0,0,.18);
-        }
-        div[data-testid="stMetricValue"] {font-size: 1.65rem; color: #E0F2FE;}
-        .hero {
-            padding: 1.35rem 1.6rem;
-            border-radius: 24px;
+        .stApp {
             background:
-                radial-gradient(circle at 12% 20%, rgba(0,229,255,.22), transparent 26%),
-                radial-gradient(circle at 82% 0%, rgba(99,102,241,.25), transparent 30%),
-                linear-gradient(135deg, #020617 0%, #0f172a 48%, #062B3C 100%);
-            border: 1px solid rgba(125,211,252,.28);
-            box-shadow: 0 16px 45px rgba(0,0,0,.32);
-            margin-bottom: 1rem;
+                radial-gradient(circle at 18% 12%, rgba(0, 229, 255, 0.12), transparent 28%),
+                radial-gradient(circle at 85% 20%, rgba(59, 130, 246, 0.16), transparent 30%),
+                linear-gradient(135deg, #050814 0%, #08111f 45%, #020617 100%);
+            color: #f8fafc;
         }
-        .hero h1 {margin:0; font-size: 1.9rem; letter-spacing:.2px; color:#F8FAFC;}
-        .hero p {margin:.35rem 0 0 0; color:#BAE6FD; font-size:.98rem;}
-        .tag {
-            display:inline-block; padding:.22rem .58rem; border-radius:999px;
-            border:1px solid rgba(34,211,238,.4); color:#A5F3FC; background:rgba(8,47,73,.35);
-            margin-right:.4rem; font-size:.78rem;
+        .block-container {
+            max-width: 1500px;
+            padding-top: 1.4rem;
+            padding-bottom: 3rem;
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #07111f 0%, #0f172a 100%);
+            border-right: 1px solid rgba(34, 211, 238, 0.18);
+        }
+        .hero {
+            padding: 1.6rem 1.8rem;
+            border: 1px solid rgba(34, 211, 238, 0.35);
+            border-radius: 26px;
+            background: linear-gradient(135deg, rgba(8, 47, 73, 0.86), rgba(30, 58, 138, 0.55));
+            box-shadow: 0 0 32px rgba(14, 165, 233, 0.22);
+            margin-bottom: 1.1rem;
+        }
+        .hero h1 {
+            margin: 0;
+            color: #ffffff;
+            letter-spacing: -0.03em;
+            font-size: 2rem;
+        }
+        .hero p {
+            color: #bae6fd;
+            margin-top: .65rem;
+            font-size: 1.02rem;
+        }
+        .pill {
+            display: inline-block;
+            padding: .25rem .65rem;
+            margin-right: .35rem;
+            border-radius: 999px;
+            border: 1px solid rgba(34, 211, 238, .55);
+            color: #a5f3fc;
+            background: rgba(8, 47, 73, .38);
+            font-size: .78rem;
+            font-weight: 700;
         }
         .section-title {
-            font-size: 1.25rem; font-weight: 800; color:#F8FAFC; margin: 1.1rem 0 .55rem 0;
+            color: #e0f2fe;
+            margin-top: 1.4rem;
+            padding-top: .7rem;
+            border-top: 1px solid rgba(148, 163, 184, .18);
         }
-        .category-band {
-            margin-top: 1.1rem; padding: .9rem 1rem; border-radius: 18px;
-            background: linear-gradient(90deg, rgba(14,165,233,.24), rgba(15,23,42,.5));
-            border: 1px solid rgba(125,211,252,.22);
-            font-weight: 800; color: #E0F2FE; font-size: 1.05rem;
+        .question-card {
+            padding: 1.05rem 1.15rem;
+            margin: .8rem 0 1rem 0;
+            border-radius: 22px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, .96), rgba(15, 40, 68, .82));
+            border: 1px solid rgba(34, 211, 238, .22);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, .25);
         }
-        .assessment-card {
-            border:1px solid rgba(148,163,184,.22);
-            border-left: 4px solid #22D3EE;
-            background: linear-gradient(135deg, rgba(15,23,42,.88), rgba(2,6,23,.88));
-            padding: 1rem 1.05rem;
-            border-radius: 20px;
-            margin-bottom: .85rem;
-            box-shadow: 0 10px 26px rgba(0,0,0,.22);
+        .question-id {
+            color: #67e8f9;
+            font-size: .78rem;
+            font-weight: 800;
+            letter-spacing: .06em;
+            text-transform: uppercase;
         }
-        .assessment-card h4 {margin:0 0 .35rem 0; color:#F8FAFC; font-size:1.05rem;}
-        .assessment-card .definition {color:#CBD5E1; font-size:.91rem; line-height:1.35rem; white-space:pre-wrap;}
-        .assessment-card .needed {color:#FDE68A; font-size:.86rem; line-height:1.25rem; white-space:pre-wrap;}
-        .evidence-pill {
-            display:inline-block; background:rgba(34,197,94,.16); color:#BBF7D0;
-            border:1px solid rgba(34,197,94,.35); padding:.18rem .5rem; border-radius:999px; font-size:.78rem;
+        .question-title {
+            font-size: 1.08rem;
+            font-weight: 800;
+            color: #ffffff;
+            margin-top: .2rem;
         }
-        .warning-pill {
-            display:inline-block; background:rgba(245,158,11,.14); color:#FDE68A;
-            border:1px solid rgba(245,158,11,.32); padding:.18rem .5rem; border-radius:999px; font-size:.78rem;
+        .evidence-hint {
+            color: #cbd5e1;
+            font-size: .9rem;
+            margin-top: .25rem;
         }
-        .bad-pill {
-            display:inline-block; background:rgba(239,68,68,.14); color:#FECACA;
-            border:1px solid rgba(239,68,68,.32); padding:.18rem .5rem; border-radius:999px; font-size:.78rem;
+        .metric-card {
+            padding: .85rem 1rem;
+            border-radius: 18px;
+            border: 1px solid rgba(34, 211, 238, .20);
+            background: rgba(15, 23, 42, .72);
         }
-        .small-muted {color:#94A3B8; font-size:.85rem;}
-        .stTabs [data-baseweb="tab-list"] {gap: 8px;}
-        .stTabs [data-baseweb="tab"] {
-            background: rgba(15,23,42,.72); border-radius: 14px; padding: 8px 14px;
-            border: 1px solid rgba(148,163,184,.18);
+        div[data-testid="stMetricValue"] {font-size: 1.8rem; color: #ecfeff;}
+        div[data-testid="stMetricLabel"] {color: #bae6fd;}
+        .warning-soft {
+            padding: .8rem 1rem;
+            border-radius: 16px;
+            background: rgba(127, 29, 29, .38);
+            border: 1px solid rgba(248, 113, 113, .38);
+            color: #fecaca;
         }
         </style>
         """,
@@ -716,22 +246,20 @@ def render_header() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <span class="tag">DiaSorin LATAM</span><span class="tag">Technical Support Health Check</span><span class="tag">{APP_VERSION}</span>
-            <h1>{APP_TITLE}</h1>
-            <p>Assessment corporativo con evidencia por pregunta + análisis ISR-Live enfocado únicamente en el distribuidor seleccionado.</p>
+            <span class="pill">DiaSorin LATAM</span>
+            <span class="pill">Technical Support Health Check</span>
+            <span class="pill">{APP_VERSION}</span>
+            <h1>LATAM Distributor Service Excellence Assessment</h1>
+            <p>Assessment corporativo completo con evidencia por pregunta + análisis ISR-Live enfocado únicamente en el distribuidor seleccionado.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
-def safe_filename(value: str) -> str:
-    value = str(value or "").strip()
-    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
-    return value[:140] or "file"
 
+# ============================================================
+# Utilidades de datos
+# ============================================================
 
 def normalize_text(value) -> str:
     if value is None:
@@ -741,41 +269,42 @@ def normalize_text(value) -> str:
             return ""
     except Exception:
         pass
-    text = str(value).strip()
-    text = text.replace("\u00a0", " ")
-    return re.sub(r"\s+", " ", text)
+    return re.sub(r"\s+", " ", str(value).strip())
 
 
 def normalize_key(value) -> str:
     text = normalize_text(value).lower()
     text = text.replace("’", "'").replace("´", "'")
-    text = re.sub(r"\s+", " ", text)
-    return text
+    text = re.sub(r"[^a-z0-9áéíóúñü' ]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
-def canonical_col_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+def normalize_col(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
 
 
-def get_col(df: pd.DataFrame, logical_name: str) -> Optional[str]:
-    normalized = {canonical_col_name(c): c for c in df.columns}
+def detect_column(df: pd.DataFrame, logical_name: str) -> Optional[str]:
+    normalized = {normalize_col(c): c for c in df.columns}
     for candidate in COLUMN_SYNONYMS.get(logical_name, []):
-        key = canonical_col_name(candidate)
+        key = normalize_col(candidate)
         if key in normalized:
             return normalized[key]
-    # flexible fallback
-    tokens = {
+
+    flexible_tokens = {
         "distributor": ["distributor"],
         "country": ["country"],
-        "instrument_type": ["instrument", "type"],
+        "instrument_type": ["instrument"],
         "serial_number": ["serial"],
         "customer_name": ["customer"],
+        "city": ["city"],
         "machine_config": ["machine", "config"],
         "instrument_status": ["status"],
-    }.get(logical_name, [])
+        "software_version": ["software"],
+    }
+    tokens = flexible_tokens.get(logical_name, [])
     for col in df.columns:
         low = str(col).lower()
-        if tokens and all(t in low for t in tokens):
+        if all(t in low for t in tokens):
             return col
     return None
 
@@ -787,589 +316,505 @@ def clean_instrument_type(value: str) -> str:
     low = text.lower()
     if "xl las" in low:
         return "LIAISON XL LAS"
-    if "liaison xl" in low or low in {"xl", "lxl"}:
+    if "liaison xl" in low or low in {"xl", "lxl"} or " lxl" in low:
         return "LIAISON XL"
-    if "liaison xs" in low or low in {"xs", "lxs"}:
+    if "liaison xs" in low or low in {"xs", "lxs"} or " lxs" in low:
         return "LIAISON XS"
-    if "liaison" in low:
-        return "LIAISON"
-    return text or "Not reported"
+    return text or "Model not reported"
 
 
-def is_invalid_machine_config(value: str) -> bool:
+def machine_config_status(value: str) -> str:
     low = normalize_key(value)
-    if low in INVALID_MC_VALUES:
-        return True
-    if len(low) < 3:
-        return True
-    return False
+    if low in INVALID_MACHINE_CONFIG_VALUES or len(low) < 3:
+        return "Incomplete / invalid"
+    return "Complete"
 
 
-def read_table(uploaded_file) -> pd.DataFrame:
+def normalize_status(value: str) -> str:
+    text = normalize_text(value)
+    low = text.lower()
+    if not text:
+        return "Status not reported"
+    if "routine" in low or "rutina" in low:
+        return "In routine"
+    if "scrap" in low or "scrapped" in low or "baja" in low:
+        return "Scrapped"
+    if "warehouse" in low or "stock" in low or "almacen" in low or "almacén" in low:
+        return "Warehouse / Stock"
+    if "demo" in low:
+        return "Demo"
+    if "install" in low or "installed" in low or "active" in low:
+        return "Installed / Active"
+    if "remove" in low or "decommission" in low or "inactive" in low:
+        return "Removed / Inactive"
+    return text
+
+
+def read_any_table(uploaded_file) -> pd.DataFrame:
     name = uploaded_file.name.lower()
-    data = bytes(uploaded_file.getbuffer())
+    raw = uploaded_file.getvalue()
     if name.endswith((".xlsx", ".xlsm", ".xls")):
-        return pd.read_excel(io.BytesIO(data), dtype=str)
-    # CSV: delimiter/encoding robusto
-    for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+        return pd.read_excel(io.BytesIO(raw), dtype=str)
+
+    encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252"]
+    last_error = None
+    for enc in encodings:
         try:
-            text = data.decode(enc)
-        except Exception:
-            continue
-        sample = text[:6000]
-        sep = ";" if sample.count(";") > sample.count(",") else ","
-        try:
-            return pd.read_csv(io.StringIO(text), sep=sep, dtype=str, engine="python", on_bad_lines="skip", index_col=False)
-        except Exception:
+            text = raw.decode(enc)
+            sample = text[:4000]
+            sep = ";" if sample.count(";") > sample.count(",") else ","
+            if "\t" in sample and sample.count("\t") > max(sample.count(";"), sample.count(",")):
+                sep = "\t"
+            return pd.read_csv(io.StringIO(text), sep=sep, dtype=str, engine="python")
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"No fue posible leer el archivo. Último error: {last_error}")
+
+
+def load_distributors() -> pd.DataFrame:
+    paths = [
+        DATA_DIR / "distributors_master_latam.csv",
+        DATA_DIR / "distributors_master.csv",
+        BASE_DIR / "distributors_master_latam.csv",
+        BASE_DIR / "distributors_master.csv",
+    ]
+    for path in paths:
+        if path.exists():
             try:
-                return pd.read_csv(io.StringIO(text), sep=None, dtype=str, engine="python", on_bad_lines="skip", index_col=False)
+                df = pd.read_csv(path, dtype=str)
+                distributor_col = detect_column(df, "distributor") or "Distributor name"
+                country_col = detect_column(df, "country") or "Country"
+                if distributor_col in df.columns:
+                    out = pd.DataFrame()
+                    out["Distributor name"] = df[distributor_col].apply(normalize_text)
+                    out["Country"] = df[country_col].apply(normalize_text) if country_col in df.columns else ""
+                    out = out[out["Distributor name"] != ""].drop_duplicates().sort_values("Distributor name")
+                    if not out.empty:
+                        return out.reset_index(drop=True)
             except Exception:
                 pass
-    raise ValueError("No fue posible leer el archivo cargado.")
+    return pd.DataFrame(FALLBACK_DISTRIBUTORS).drop_duplicates().sort_values("Distributor name").reset_index(drop=True)
 
-# ------------------------------------------------------------
-# Data loading
-# ------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def load_distributors() -> pd.DataFrame:
-    path = DISTRIBUTORS_LATAM_PATH if DISTRIBUTORS_LATAM_PATH.exists() else DISTRIBUTORS_MASTER_PATH
-    if path.exists():
-        try:
-            df = pd.read_csv(path, dtype=str).fillna("")
-        except Exception:
-            df = pd.DataFrame(FALLBACK_DISTRIBUTORS).fillna("")
+
+def filter_isrlive_by_distributor(df: pd.DataFrame, distributor: str, country: str) -> Tuple[pd.DataFrame, Dict[str, Optional[str]], str]:
+    mapping = {k: detect_column(df, k) for k in COLUMN_SYNONYMS}
+    dist_col = mapping.get("distributor")
+    country_col = mapping.get("country")
+    msg = ""
+
+    filtered = df.copy()
+    if dist_col:
+        target = normalize_key(distributor)
+        mask = filtered[dist_col].apply(lambda x: target in normalize_key(x) or normalize_key(x) in target)
+        filtered = filtered[mask].copy()
+        msg += f"Filtro aplicado por distribuidor usando columna '{dist_col}'. "
     else:
-        df = pd.DataFrame(FALLBACK_DISTRIBUTORS).fillna("")
-    required = ["Distributor name", "Country", "World Region", "Commercial Region"]
-    for c in required:
-        if c not in df.columns:
-            df[c] = ""
-    for c in required:
-        df[c] = df[c].astype(str).str.strip()
-    df = df[df["Distributor name"].ne("")].drop_duplicates()
-    return df.sort_values(["Distributor name", "Country"])
+        msg += "No se detectó columna de distribuidor en el archivo; se analiza el archivo cargado completo. "
+
+    if filtered.empty and country_col and country:
+        country_target = normalize_key(country)
+        mask = df[country_col].apply(lambda x: country_target in normalize_key(x) or normalize_key(x) in country_target)
+        filtered = df[mask].copy()
+        msg += f"No hubo coincidencia exacta por distribuidor; se aplicó filtro por país usando columna '{country_col}'. "
+
+    return filtered, mapping, msg
 
 
-@st.cache_data(show_spinner=False)
-def load_corporate_questions() -> pd.DataFrame:
-    if CORPORATE_QUESTIONS_PATH.exists():
-        try:
-            df = pd.read_csv(CORPORATE_QUESTIONS_PATH, dtype=str).fillna("")
-        except Exception:
-            df = pd.DataFrame(FALLBACK_CORPORATE_QUESTIONS).fillna("")
-    else:
-        df = pd.DataFrame(FALLBACK_CORPORATE_QUESTIONS).fillna("")
-    # standard columns
-    expected = ["Macro Category", "Item", "Definition", "Needed In Advance", "Original Response", "Original Comments", "Evidence Required"]
-    for c in expected:
-        if c not in df.columns:
-            df[c] = ""
-    # sort by intended corporate order
-    cat_order = {cat: i for i, cat in enumerate(CATEGORY_WEIGHTS.keys())}
-    df["__order"] = df["Macro Category"].map(cat_order).fillna(999)
-    df = df.sort_values(["__order", "Macro Category", "Item"]).drop(columns=["__order"])
-    df = df.reset_index(drop=True)
-    df["Question ID"] = [f"Q{idx+1:02d}" for idx in range(len(df))]
-    return df
-
-# ------------------------------------------------------------
-# State / scoring
-# ------------------------------------------------------------
-def init_question_state(questions: pd.DataFrame) -> None:
-    if "assessment_state_ready" not in st.session_state:
-        st.session_state["assessment_state_ready"] = True
-    for _, row in questions.iterrows():
-        qid = row["Question ID"]
-        original = normalize_text(row.get("Original Response", ""))
-        default_response = {"Y": "Y - Cumple", "P": "P - Parcial", "N": "N - No cumple"}.get(original.upper(), "P - Parcial")
-        defaults = {
-            f"resp_{qid}": default_response,
-            f"risk_{qid}": "Medium" if default_response == "P - Parcial" else ("Low" if default_response == "Y - Cumple" else "High"),
-            f"status_{qid}": "Closed" if default_response == "Y - Cumple" else "Open",
-            f"owner_{qid}": "Distributor / DiaSorin",
-            f"due_{qid}": date.today(),
-            f"comments_{qid}": normalize_text(row.get("Original Comments", "")),
-            f"action_{qid}": "",
-            f"evidence_notes_{qid}": "",
-            f"evidence_files_{qid}": [],
-        }
-        for key, val in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = val
+def standardize_isrlive(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.DataFrame:
+    out = pd.DataFrame()
+    out["Distributor"] = df[mapping["distributor"]].apply(normalize_text) if mapping.get("distributor") else ""
+    out["Country"] = df[mapping["country"]].apply(normalize_text) if mapping.get("country") else ""
+    out["Serial Number"] = df[mapping["serial_number"]].apply(normalize_text) if mapping.get("serial_number") else ""
+    out["Instrument Model"] = df[mapping["instrument_type"]].apply(clean_instrument_type) if mapping.get("instrument_type") else "Model not reported"
+    out["Customer"] = df[mapping["customer_name"]].apply(normalize_text) if mapping.get("customer_name") else ""
+    out["City"] = df[mapping["city"]].apply(normalize_text) if mapping.get("city") else ""
+    out["Machine Configuration"] = df[mapping["machine_config"]].apply(normalize_text) if mapping.get("machine_config") else ""
+    out["Machine Config Status"] = out["Machine Configuration"].apply(machine_config_status)
+    out["Instrument Status Original"] = df[mapping["instrument_status"]].apply(normalize_text) if mapping.get("instrument_status") else ""
+    out["Instrument Status"] = out["Instrument Status Original"].apply(normalize_status)
+    out["Software Version"] = df[mapping["software_version"]].apply(normalize_text) if mapping.get("software_version") else ""
+    return out
 
 
-def question_snapshot(questions: pd.DataFrame) -> pd.DataFrame:
+def save_uploaded_evidence(question_id: str, files) -> List[str]:
+    saved = []
+    if not files:
+        return saved
+    q_dir = EVIDENCE_DIR / question_id
+    q_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for f in files:
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", f.name)[:140]
+        path = q_dir / f"{stamp}_{safe_name}"
+        path.write_bytes(f.getvalue())
+        saved.append(str(path))
+    return saved
+
+
+def get_question_state(qid: str) -> Dict:
+    default = {
+        "response": "Pendiente",
+        "risk": "Medium",
+        "status": "Open",
+        "owner": "",
+        "due_date": str(date.today()),
+        "comments": "",
+        "action_plan": "",
+        "evidence_note": "",
+        "files": [],
+    }
+    st.session_state.setdefault("assessment_answers", {})
+    st.session_state["assessment_answers"].setdefault(qid, default.copy())
+    return st.session_state["assessment_answers"][qid]
+
+
+def score_from_response(response: str) -> Optional[float]:
+    if response.startswith("Y"):
+        return 1.0
+    if response.startswith("P"):
+        return 0.5
+    if response.startswith("N"):
+        return 0.0
+    return None
+
+
+def build_assessment_dataframe() -> pd.DataFrame:
     rows = []
-    for _, row in questions.iterrows():
-        qid = row["Question ID"]
-        resp = st.session_state.get(f"resp_{qid}", "P - Parcial")
-        score = RESPONSE_SCORE.get(resp, 0.0)
+    for q in CORPORATE_QUESTIONS:
+        s = get_question_state(q["id"])
         rows.append({
-            "Question ID": qid,
-            "Macro Category": row["Macro Category"],
-            "Item": row["Item"],
-            "Definition": row["Definition"],
-            "Needed In Advance": row.get("Needed In Advance", ""),
-            "Evidence Required": row.get("Evidence Required", ""),
-            "Response": resp,
-            "Score": score,
-            "Risk": st.session_state.get(f"risk_{qid}", "Medium"),
-            "Item Status": st.session_state.get(f"status_{qid}", "Open"),
-            "Responsible": st.session_state.get(f"owner_{qid}", ""),
-            "Due Date": str(st.session_state.get(f"due_{qid}", "")),
-            "Comments / Notes": st.session_state.get(f"comments_{qid}", ""),
-            "Action Plan": st.session_state.get(f"action_{qid}", ""),
-            "Evidence Notes": st.session_state.get(f"evidence_notes_{qid}", ""),
-            "Evidence Files": "; ".join(st.session_state.get(f"evidence_files_{qid}", [])),
-            "Evidence Uploaded": "Yes" if st.session_state.get(f"evidence_files_{qid}", []) else "No",
+            "ID": q["id"],
+            "Category": q["category"],
+            "Question": q["question"],
+            "Response": s.get("response", "Pendiente"),
+            "Score": score_from_response(s.get("response", "Pendiente")),
+            "Risk": s.get("risk", ""),
+            "Status": s.get("status", ""),
+            "Owner": s.get("owner", ""),
+            "Due date": s.get("due_date", ""),
+            "Comments": s.get("comments", ""),
+            "Action plan": s.get("action_plan", ""),
+            "Evidence note": s.get("evidence_note", ""),
+            "Evidence files": " | ".join(s.get("files", [])),
         })
     return pd.DataFrame(rows)
 
 
-def calculate_summary(snapshot: pd.DataFrame) -> Dict:
-    if snapshot.empty:
-        return {"overall": 0, "open": 0, "critical": 0, "by_category": pd.DataFrame()}
-    valid = snapshot[~snapshot["Score"].isna()].copy()
-    by_cat_rows = []
-    weighted_total = 0.0
-    weight_sum = 0.0
-    for cat, group in valid.groupby("Macro Category", dropna=False):
-        cat_score = float(group["Score"].mean() * 100) if len(group) else 0.0
-        weight = CATEGORY_WEIGHTS.get(cat, 0.05)
-        weighted_total += cat_score * weight
-        weight_sum += weight
-        by_cat_rows.append({
-            "Macro Category": cat,
-            "Score": round(cat_score, 1),
-            "Items": int(len(group)),
-            "Open/Partial": int(group["Response"].isin(["P - Parcial", "N - No cumple"]).sum()),
-            "Weight": weight,
-        })
-    overall = round(weighted_total / weight_sum, 1) if weight_sum else round(float(valid["Score"].mean() * 100), 1)
-    maturity = "Best in class" if overall >= 95 else "Maduro" if overall >= 90 else "Controlado" if overall >= 80 else "En desarrollo" if overall >= 65 else "Crítico"
-    return {
-        "overall": overall,
-        "maturity": maturity,
-        "open": int(snapshot["Response"].isin(["P - Parcial", "N - No cumple"]).sum()),
-        "critical": int((snapshot["Risk"] == "Critical").sum()),
-        "evidence": int((snapshot["Evidence Uploaded"] == "Yes").sum()),
-        "total_questions": int(len(snapshot)),
-        "by_category": pd.DataFrame(by_cat_rows).sort_values("Score") if by_cat_rows else pd.DataFrame(),
-    }
-
-
-def save_uploaded_evidence(distributor: str, period: str, qid: str, category: str, item: str, files: List, notes: str) -> List[str]:
-    if not files:
-        return []
-    folder = EVIDENCE_DIR / safe_filename(distributor) / safe_filename(period) / safe_filename(qid + "_" + category) / safe_filename(item)
-    folder.mkdir(parents=True, exist_ok=True)
-    stored_names = []
-    for f in files:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = folder / f"{timestamp}_{safe_filename(f.name)}"
-        with open(dest, "wb") as out:
-            out.write(bytes(f.getbuffer()))
-        stored_names.append(f.name)
-    if notes:
-        with open(folder / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_notes.txt", "w", encoding="utf-8") as out:
-            out.write(notes)
-    return stored_names
-
-# ------------------------------------------------------------
-# Distributor selector
-# ------------------------------------------------------------
-def distributor_selector() -> Dict:
-    dist_df = load_distributors()
-    if dist_df.empty:
-        st.sidebar.error("No hay distribuidores disponibles. Revisa la data maestra o el fallback interno.")
-        return {"distributor": "", "country": "", "world_region": "", "commercial_region": "", "period": ""}
-
-    distributors = sorted(dist_df["Distributor name"].dropna().unique().tolist())
-    if "selected_distributor" not in st.session_state:
-        st.session_state["selected_distributor"] = distributors[0] if distributors else ""
-
-    st.sidebar.markdown("### Evaluación")
-    distributor = st.sidebar.selectbox("Distribuidor", distributors, key="selected_distributor")
-    rows = dist_df[dist_df["Distributor name"] == distributor].copy()
-    countries = sorted(rows["Country"].dropna().unique().tolist()) or [""]
-    country = st.sidebar.selectbox("País", countries, key="selected_country")
-
-    region_row = rows[rows["Country"] == country].head(1)
-    if region_row.empty:
-        region_row = rows.head(1)
-    world_region = normalize_text(region_row.iloc[0].get("World Region", "")) if not region_row.empty else ""
-    commercial_region = normalize_text(region_row.iloc[0].get("Commercial Region", "")) if not region_row.empty else ""
-
-    st.sidebar.text_input("World Region", value=world_region, disabled=True)
-    st.sidebar.text_input("Commercial Region", value=commercial_region, disabled=True)
-
-    st.sidebar.markdown("### Periodo")
-    period_start = st.sidebar.date_input("Fecha inicial", value=date(date.today().year, 1, 1), key="period_start")
-    period_end = st.sidebar.date_input("Fecha final", value=date.today(), key="period_end")
-    if period_start > period_end:
-        st.sidebar.warning("La fecha inicial no puede ser mayor que la fecha final.")
-    period = f"{period_start.isoformat()} to {period_end.isoformat()}"
-    return {
-        "distributor": distributor,
-        "country": country,
-        "world_region": world_region,
-        "commercial_region": commercial_region,
-        "period_start": period_start,
-        "period_end": period_end,
-        "period": period,
-    }
-
-# ------------------------------------------------------------
-# Corporate Assessment Page
-# ------------------------------------------------------------
-def response_badge(resp: str) -> str:
-    if resp == "Y - Cumple":
-        return '<span class="evidence-pill">Cumple</span>'
-    if resp == "P - Parcial":
-        return '<span class="warning-pill">Parcial</span>'
-    if resp == "N - No cumple":
-        return '<span class="bad-pill">No cumple</span>'
-    return '<span class="small-muted">No aplica</span>'
-
-
-def page_corporate(meta: Dict) -> None:
-    questions = load_corporate_questions()
-    init_question_state(questions)
-    snapshot = question_snapshot(questions)
-    summary = calculate_summary(snapshot)
-
-    st.markdown('<div class="section-title">Assessment corporativo completo</div>', unsafe_allow_html=True)
-    st.caption("Aquí deben verse todas las preguntas del formato original. Cada pregunta tiene su propio espacio para respuesta, riesgo, plan de acción y evidencia.")
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Preguntas", summary["total_questions"])
-    c2.metric("Score", f"{summary['overall']}%")
-    c3.metric("Madurez", summary["maturity"])
-    c4.metric("Abiertas/parciales", summary["open"])
-    c5.metric("Evidencias", f"{summary['evidence']}/{summary['total_questions']}")
-
-    by_cat = summary["by_category"]
-    if not by_cat.empty:
-        fig = px.bar(by_cat, x="Macro Category", y="Score", text="Score", hover_data=["Items", "Open/Partial"], title="Score por categoría corporativa")
-        fig.update_layout(height=360, xaxis_title="", yaxis_title="Score", margin=dict(l=20, r=20, t=60, b=80))
-        st.plotly_chart(fig, use_container_width=True)
-
-    with st.expander("Datos generales de la evaluación", expanded=True):
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        cc1.text_input("Distribuidor", value=meta["distributor"], disabled=True)
-        cc2.text_input("País", value=meta["country"], disabled=True)
-        cc3.text_input("Periodo", value=meta["period"], disabled=True)
-        reviewer = cc4.text_input("Reviewer", value=st.session_state.get("reviewer", "Javier Avellaneda"), key="reviewer")
-        general_notes = st.text_area("Notas generales", value=st.session_state.get("general_notes", ""), key="general_notes", height=90)
-
-    # Global reset/download controls
-    top1, top2, top3 = st.columns([1, 1, 2])
-    if top1.button("Recargar respuestas base", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            if re.match(r"^(resp|risk|status|owner|due|comments|action|evidence_notes|evidence_files)_Q\d+", key):
-                del st.session_state[key]
-        st.session_state.pop("assessment_state_ready", None)
-        st.rerun()
-    if top2.button("Marcar todo en revisión", use_container_width=True):
-        for qid in questions["Question ID"]:
-            st.session_state[f"status_{qid}"] = "In Progress"
-        st.rerun()
-
-    # Cards by category
-    for category, group in questions.groupby("Macro Category", sort=False):
-        st.markdown(f'<div class="category-band">{category} · {len(group)} puntos</div>', unsafe_allow_html=True)
-        for _, q in group.iterrows():
-            qid = q["Question ID"]
-            st.markdown(
-                f"""
-                <div class="assessment-card">
-                    <h4>{qid} · {q['Item']} {response_badge(st.session_state.get(f'resp_{qid}', 'P - Parcial'))}</h4>
-                    <div class="definition"><b>Definición:</b><br>{q['Definition']}</div>
-                    {f'<br><div class="needed"><b>Needed in advance:</b><br>{q.get("Needed In Advance", "")}</div>' if normalize_text(q.get('Needed In Advance','')) else ''}
-                    {f'<br><div class="small-muted"><b>Evidencia esperada:</b> {q.get("Evidence Required", "")}</div>' if normalize_text(q.get('Evidence Required','')) else ''}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            w1, w2, w3, w4, w5 = st.columns([1.15, 1, 1, 1, 1])
-            with w1:
-                st.selectbox("Respuesta", list(RESPONSE_SCORE.keys()), key=f"resp_{qid}", label_visibility="collapsed")
-            with w2:
-                st.selectbox("Riesgo", ["Low", "Medium", "High", "Critical"], key=f"risk_{qid}", label_visibility="collapsed")
-            with w3:
-                st.selectbox("Estado", ["Open", "In Progress", "Closed", "Overdue", "Not Applicable"], key=f"status_{qid}", label_visibility="collapsed")
-            with w4:
-                st.text_input("Responsable", key=f"owner_{qid}", label_visibility="collapsed")
-            with w5:
-                st.date_input("Fecha compromiso", key=f"due_{qid}", label_visibility="collapsed")
-
-            cnotes, caction = st.columns(2)
-            with cnotes:
-                st.text_area("Comentarios / notas", key=f"comments_{qid}", height=82)
-            with caction:
-                st.text_area("Plan de acción", key=f"action_{qid}", height=82)
-
-            enotes, eupload = st.columns([1, 1.4])
-            with enotes:
-                st.text_area("Nota de evidencia", key=f"evidence_notes_{qid}", height=72)
-            with eupload:
-                uploaded_files = st.file_uploader(
-                    f"Evidencia para {qid} - {q['Item']}",
-                    type=["png", "jpg", "jpeg", "pdf", "xlsx", "xls", "csv", "txt", "zip", "docx", "pptx"],
-                    accept_multiple_files=True,
-                    key=f"upload_{qid}",
-                )
-                colsave, colstatus = st.columns([.8, 1.2])
-                with colsave:
-                    if st.button("Guardar evidencia", key=f"save_ev_{qid}", use_container_width=True):
-                        stored = save_uploaded_evidence(
-                            meta["distributor"], meta["period"], qid, q["Macro Category"], q["Item"], uploaded_files,
-                            st.session_state.get(f"evidence_notes_{qid}", ""),
-                        )
-                        if stored:
-                            existing = list(st.session_state.get(f"evidence_files_{qid}", []))
-                            st.session_state[f"evidence_files_{qid}"] = existing + stored
-                            st.success(f"Evidencia guardada para {qid}.")
-                        else:
-                            st.warning("Carga al menos un archivo antes de guardar.")
-                with colstatus:
-                    files = st.session_state.get(f"evidence_files_{qid}", [])
-                    if files:
-                        st.markdown(f'<span class="evidence-pill">{len(files)} archivo(s): {", ".join(files[:3])}</span>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<span class="warning-pill">Sin evidencia cargada</span>', unsafe_allow_html=True)
-            st.divider()
-
-    # Exports
-    snapshot = question_snapshot(questions)
-    summary = calculate_summary(snapshot)
-    st.markdown('<div class="section-title">Exportar informe</div>', unsafe_allow_html=True)
-    xlsx = build_excel_report(snapshot, summary, meta, reviewer, general_notes)
-    colx, colp, colj = st.columns(3)
-    with colx:
-        st.download_button(
-            "Descargar informe Excel",
-            data=xlsx,
-            file_name=f"Service_Assessment_{safe_filename(meta['distributor'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    with colp:
-        if REPORTLAB_OK:
-            pdf = build_pdf_report(snapshot, summary, meta, reviewer, general_notes)
-            st.download_button(
-                "Descargar informe PDF",
-                data=pdf,
-                file_name=f"Service_Assessment_{safe_filename(meta['distributor'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        else:
-            st.info("PDF no disponible: falta reportlab.")
-    with colj:
-        payload = {"meta": {**meta, "reviewer": reviewer, "notes": general_notes}, "items": snapshot.to_dict(orient="records")}
-        st.download_button(
-            "Descargar respaldo JSON",
-            data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-            file_name=f"Service_Assessment_Backup_{safe_filename(meta['distributor'])}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
-
-# ------------------------------------------------------------
-# ISR-Live Analysis
-# ------------------------------------------------------------
-def standardize_isrlive(df: pd.DataFrame) -> pd.DataFrame:
-    out = pd.DataFrame()
-    for logical in COLUMN_SYNONYMS:
-        col = get_col(df, logical)
-        out[logical] = df[col].apply(normalize_text) if col else ""
-    out["instrument_type"] = out["instrument_type"].apply(clean_instrument_type)
-    out["serial_number"] = out["serial_number"].str.replace(r"\.0$", "", regex=True)
-    out["machine_config_ok"] = ~out["machine_config"].apply(is_invalid_machine_config)
-    out["machine_config_status"] = np.where(out["machine_config_ok"], "Completa", "Incompleta / inválida")
-    out["instrument_status_clean"] = out["instrument_status"].replace("", "Status not reported")
-    out["blood_bank"] = out["blood_bank"].replace("", "Not reported")
-    return out
-
-
-def filter_by_distributor(df: pd.DataFrame, selected_distributor: str, selected_country: str) -> pd.DataFrame:
-    if df.empty:
-        return df
-    target = normalize_key(selected_distributor)
-    target_country = normalize_key(selected_country)
-    dist_key = df["distributor"].apply(normalize_key)
-    mask = dist_key.eq(target)
-    if mask.sum() == 0:
-        # fallback contains both directions, useful if ISR-Live uses short/long legal names
-        mask = dist_key.apply(lambda x: target in x or x in target if x else False)
-    # country helps when duplicate distributor name exists, but do not remove valid rows if country missing
-    if selected_country and "country" in df.columns:
-        country_key = df["country"].apply(normalize_key)
-        country_mask = country_key.eq(target_country)
-        if (mask & country_mask).sum() > 0:
-            mask = mask & country_mask
-    return df[mask].copy()
-
-
-def page_isrlive(meta: Dict) -> None:
-    st.markdown('<div class="section-title">Análisis ISR-Live por distribuidor</div>', unsafe_allow_html=True)
-    st.caption("Este análisis se filtra únicamente por el distribuidor seleccionado en la barra lateral. Las gráficas muestran base instalada, Machine Configuration y status por modelo.")
-
-    uploaded = st.file_uploader("Subir CSV/XLSX exportado de ISR-Live", type=["csv", "xlsx", "xls"], key="isrlive_upload")
-    if not uploaded:
-        st.info("Carga el archivo de ISR-Live para iniciar el análisis.")
-        return
-
-    try:
-        raw = read_table(uploaded)
-        std = standardize_isrlive(raw)
-    except Exception as exc:
-        st.error(f"No pude leer/normalizar el archivo: {exc}")
-        return
-
-    filtered = filter_by_distributor(std, meta["distributor"], meta["country"])
-    if filtered.empty:
-        st.error("No encontré registros para el distribuidor seleccionado dentro del archivo ISR-Live cargado.")
-        detected = std[["distributor", "country"]].drop_duplicates().sort_values(["distributor", "country"]).head(100)
-        st.markdown("Distribuidores detectados en el archivo:")
-        st.dataframe(detected, use_container_width=True, hide_index=True)
-        return
-
-    total = len(filtered)
-    mc_ok = int(filtered["machine_config_ok"].sum())
-    mc_bad = int(total - mc_ok)
-    models = int(filtered["instrument_type"].nunique())
-    statuses = int(filtered["instrument_status_clean"].nunique())
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Base instalada filtrada", total)
-    c2.metric("Modelos", models)
-    c3.metric("Machine Config OK", mc_ok)
-    c4.metric("Machine Config pendiente", mc_bad)
-
-    # Charts specifically requested
-    base_model = filtered.groupby("instrument_type", dropna=False).size().reset_index(name="Cantidad").sort_values("Cantidad", ascending=False)
-    fig1 = px.bar(base_model, x="instrument_type", y="Cantidad", text="Cantidad", title="Base instalada por modelo")
-    fig1.update_layout(height=380, xaxis_title="Modelo", yaxis_title="Cantidad")
-    st.plotly_chart(fig1, use_container_width=True)
-
-    mc_model = filtered.groupby(["instrument_type", "machine_config_status"], dropna=False).size().reset_index(name="Cantidad")
-    fig2 = px.bar(mc_model, x="instrument_type", y="Cantidad", color="machine_config_status", barmode="group", text="Cantidad", title="Machine Configuration por modelo")
-    fig2.update_layout(height=400, xaxis_title="Modelo", yaxis_title="Cantidad")
-    st.plotly_chart(fig2, use_container_width=True)
-
-    status_model = filtered.groupby(["instrument_type", "instrument_status_clean"], dropna=False).size().reset_index(name="Cantidad")
-    fig3 = px.bar(status_model, x="instrument_type", y="Cantidad", color="instrument_status_clean", barmode="stack", text="Cantidad", title="Instrument Status por modelo")
-    fig3.update_layout(height=440, xaxis_title="Modelo", yaxis_title="Cantidad", legend_title="Status")
-    st.plotly_chart(fig3, use_container_width=True)
-
-    # Details
-    tabs = st.tabs(["Detalle general", "Machine Configuration incompleta", "Status", "Exportar ISR-Live filtrado"])
-    detail_cols = ["distributor", "country", "instrument_type", "serial_number", "customer_name", "city", "instrument_status", "machine_config", "machine_config_status", "software_version", "os_version", "blood_bank"]
-    with tabs[0]:
-        st.dataframe(filtered[detail_cols], use_container_width=True, hide_index=True)
-    with tabs[1]:
-        bad = filtered[~filtered["machine_config_ok"]].copy()
-        if bad.empty:
-            st.success("Todos los instrumentos filtrados tienen Machine Configuration completa según las reglas actuales.")
-        else:
-            st.dataframe(bad[detail_cols], use_container_width=True, hide_index=True)
-    with tabs[2]:
-        status_tbl = filtered.groupby(["instrument_status_clean", "instrument_type"], dropna=False).size().reset_index(name="Cantidad")
-        st.dataframe(status_tbl.sort_values(["instrument_status_clean", "instrument_type"]), use_container_width=True, hide_index=True)
-    with tabs[3]:
-        xlsx = to_excel({"ISR-Live Filtered": filtered[detail_cols], "Base by Model": base_model, "Machine Config": mc_model, "Status by Model": status_model})
-        st.download_button(
-            "Descargar análisis ISR-Live filtrado",
-            data=xlsx,
-            file_name=f"ISRLive_{safe_filename(meta['distributor'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-# ------------------------------------------------------------
-# Exports
-# ------------------------------------------------------------
-def to_excel(sheets: Dict[str, pd.DataFrame]) -> bytes:
+def to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for name, df in sheets.items():
-            sheet = re.sub(r"[\\/*?:\[\]]", "", name)[:31] or "Sheet"
-            df.to_excel(writer, sheet_name=sheet, index=False)
+        for sheet, df in sheets.items():
+            df.to_excel(writer, sheet_name=sheet[:31], index=False)
     return output.getvalue()
 
 
-def build_excel_report(snapshot: pd.DataFrame, summary: Dict, meta: Dict, reviewer: str, notes: str) -> bytes:
-    executive = pd.DataFrame([
-        {"Indicator": "Distributor", "Value": meta["distributor"]},
-        {"Indicator": "Country", "Value": meta["country"]},
-        {"Indicator": "Period", "Value": meta["period"]},
-        {"Indicator": "Reviewer", "Value": reviewer},
-        {"Indicator": "Overall Score", "Value": f"{summary['overall']}%"},
-        {"Indicator": "Maturity", "Value": summary["maturity"]},
-        {"Indicator": "Open/Partial Items", "Value": summary["open"]},
-        {"Indicator": "Critical Items", "Value": summary["critical"]},
-        {"Indicator": "Evidence Uploaded", "Value": f"{summary['evidence']}/{summary['total_questions']}"},
-        {"Indicator": "General Notes", "Value": notes},
-    ])
-    return to_excel({
-        "Executive Summary": executive,
-        "Score by Category": summary["by_category"],
-        "Assessment Items": snapshot,
-        "Action Plan": snapshot[snapshot["Response"].isin(["P - Parcial", "N - No cumple"])],
-    })
+# ============================================================
+# Sidebar
+# ============================================================
+
+def sidebar_context() -> Tuple[str, str, date, date]:
+    distributors_df = load_distributors()
+    distributors = distributors_df["Distributor name"].dropna().astype(str).sort_values().unique().tolist()
+
+    st.sidebar.markdown("### Contexto del assessment")
+    selected_distributor = st.sidebar.selectbox("Distribuidor", distributors, index=0)
+    countries = distributors_df.loc[distributors_df["Distributor name"] == selected_distributor, "Country"].dropna().astype(str).unique().tolist()
+    selected_country = countries[0] if countries else ""
+    selected_country = st.sidebar.text_input("País", value=selected_country)
+
+    st.sidebar.markdown("### Periodo evaluado")
+    start_date = st.sidebar.date_input("Fecha de inicio", value=date(date.today().year, 1, 1))
+    end_date = st.sidebar.date_input("Fecha de finalización", value=date.today())
+    if end_date < start_date:
+        st.sidebar.error("La fecha final no puede ser anterior a la fecha inicial.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Build activo: {APP_VERSION}")
+    st.session_state["selected_distributor"] = selected_distributor
+    st.session_state["selected_country"] = selected_country
+    st.session_state["period_start"] = str(start_date)
+    st.session_state["period_end"] = str(end_date)
+    return selected_distributor, selected_country, start_date, end_date
 
 
-def build_pdf_report(snapshot: pd.DataFrame, summary: Dict, meta: Dict, reviewer: str, notes: str) -> bytes:
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=1.1*cm, rightMargin=1.1*cm, topMargin=.9*cm, bottomMargin=.9*cm)
-    styles = getSampleStyleSheet()
-    title = ParagraphStyle("Title", parent=styles["Title"], alignment=TA_CENTER, fontSize=17, textColor=colors.HexColor("#0F172A"))
-    h = ParagraphStyle("H", parent=styles["Heading2"], fontSize=12, textColor=colors.HexColor("#0F172A"))
-    normal = ParagraphStyle("N", parent=styles["Normal"], fontSize=7.5, leading=9, alignment=TA_LEFT)
-    story = [Paragraph(APP_TITLE, title), Spacer(1, .25*cm)]
-    story.append(Paragraph(f"<b>Distributor:</b> {meta['distributor']} &nbsp;&nbsp; <b>Country:</b> {meta['country']} &nbsp;&nbsp; <b>Period:</b> {meta['period']} &nbsp;&nbsp; <b>Reviewer:</b> {reviewer}", normal))
-    story.append(Spacer(1, .25*cm))
-    summary_data = [["Indicator", "Value"], ["Overall Score", f"{summary['overall']}%"], ["Maturity", summary["maturity"]], ["Open/Partial Items", str(summary["open"])], ["Critical Items", str(summary["critical"])], ["Evidence", f"{summary['evidence']}/{summary['total_questions']}"]]
-    table = Table(summary_data, colWidths=[6*cm, 5*cm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#CBD5E1")), ("FONTSIZE", (0,0), (-1,-1), 8),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, .35*cm))
-    story.append(Paragraph("Assessment Items", h))
-    cols = ["Question ID", "Macro Category", "Item", "Response", "Risk", "Item Status", "Evidence Uploaded", "Action Plan"]
-    data = [cols] + snapshot[cols].astype(str).values.tolist()
-    data = [[Paragraph(str(c), normal) for c in row] for row in data]
-    tbl = Table(data, colWidths=[1.7*cm, 4.2*cm, 4.1*cm, 2.6*cm, 2*cm, 2.4*cm, 2.4*cm, 8*cm], repeatRows=1)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1E3A8A")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#E2E8F0")), ("FONTSIZE", (0,0), (-1,-1), 7),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-    ]))
-    story.append(tbl)
-    doc.build(story)
-    return buffer.getvalue()
+# ============================================================
+# Páginas
+# ============================================================
 
-# ------------------------------------------------------------
+def page_corporate_assessment(distributor: str, country: str, start_date: date, end_date: date) -> None:
+    st.subheader("Assessment corporativo completo")
+    st.caption("Todas las preguntas del formato original aparecen aquí como tarjetas editables, con evidencia independiente por cada punto.")
+
+    df_assessment = build_assessment_dataframe()
+    valid_scores = df_assessment["Score"].dropna()
+    global_score = round(valid_scores.mean() * 100, 1) if len(valid_scores) else 0
+    completed = int(df_assessment["Response"].str.startswith(("Y", "P", "N"), na=False).sum())
+    evidence_count = sum(len(get_question_state(q["id"]).get("files", [])) for q in CORPORATE_QUESTIONS)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Score corporativo", f"{global_score}%")
+    c2.metric("Preguntas respondidas", f"{completed}/{len(CORPORATE_QUESTIONS)}")
+    c3.metric("Evidencias cargadas", evidence_count)
+    c4.metric("Distribuidor", distributor)
+
+    categories = list(dict.fromkeys(q["category"] for q in CORPORATE_QUESTIONS))
+    category_filter = st.multiselect("Filtrar categorías", categories, default=categories)
+
+    for category in categories:
+        if category not in category_filter:
+            continue
+        st.markdown(f"<h3 class='section-title'>{category}</h3>", unsafe_allow_html=True)
+        for q in [x for x in CORPORATE_QUESTIONS if x["category"] == category]:
+            render_question_card(q)
+
+    df_assessment = build_assessment_dataframe()
+    category_score = (
+        df_assessment.dropna(subset=["Score"])
+        .groupby("Category", as_index=False)["Score"].mean()
+    )
+    if not category_score.empty:
+        category_score["Score %"] = (category_score["Score"] * 100).round(1)
+        st.markdown("### Score por categoría")
+        fig = px.bar(category_score, x="Category", y="Score %", text="Score %", title="Corporate assessment score by category")
+        fig.update_layout(height=430, xaxis_title="Categoría", yaxis_title="Score %")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### Exportar assessment")
+    meta = pd.DataFrame([{
+        "Distributor": distributor,
+        "Country": country,
+        "Period start": str(start_date),
+        "Period end": str(end_date),
+        "Generated at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Build": APP_VERSION,
+        "Global score": global_score,
+    }])
+    excel_bytes = to_excel_bytes({"Summary": meta, "Corporate Assessment": df_assessment})
+    st.download_button(
+        "Descargar assessment en Excel",
+        data=excel_bytes,
+        file_name=f"Corporate_Assessment_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx".replace(" ", "_"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def render_question_card(q: Dict) -> None:
+    state = get_question_state(q["id"])
+    st.markdown(
+        f"""
+        <div class="question-card">
+            <div class="question-id">{q['id']} · {q['category']}</div>
+            <div class="question-title">{q['question']}</div>
+            <div class="evidence-hint"><b>Evidencia esperada:</b> {q['evidence']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container():
+        c1, c2, c3, c4 = st.columns([1.25, 1, 1, 1.15])
+        state["response"] = c1.selectbox(
+            "Respuesta",
+            ["Pendiente", "Y - Cumple", "P - Parcial", "N - No cumple", "NA - No aplica"],
+            index=["Pendiente", "Y - Cumple", "P - Parcial", "N - No cumple", "NA - No aplica"].index(state.get("response", "Pendiente")),
+            key=f"resp_{q['id']}",
+        )
+        state["risk"] = c2.selectbox(
+            "Riesgo",
+            ["Low", "Medium", "High", "Critical"],
+            index=["Low", "Medium", "High", "Critical"].index(state.get("risk", "Medium")),
+            key=f"risk_{q['id']}",
+        )
+        state["status"] = c3.selectbox(
+            "Estado",
+            ["Open", "In progress", "Closed", "Overdue", "Not applicable"],
+            index=["Open", "In progress", "Closed", "Overdue", "Not applicable"].index(state.get("status", "Open")),
+            key=f"status_{q['id']}",
+        )
+        due_value = state.get("due_date", str(date.today()))
+        try:
+            due_date_obj = datetime.strptime(due_value, "%Y-%m-%d").date()
+        except Exception:
+            due_date_obj = date.today()
+        state["due_date"] = str(c4.date_input("Fecha compromiso", value=due_date_obj, key=f"due_{q['id']}"))
+
+        c5, c6 = st.columns([1, 2])
+        state["owner"] = c5.text_input("Responsable", value=state.get("owner", ""), key=f"owner_{q['id']}")
+        state["evidence_note"] = c6.text_input("Nota de evidencia", value=state.get("evidence_note", ""), key=f"evnote_{q['id']}")
+
+        c7, c8 = st.columns(2)
+        state["comments"] = c7.text_area("Comentarios", value=state.get("comments", ""), height=80, key=f"comments_{q['id']}")
+        state["action_plan"] = c8.text_area("Plan de acción", value=state.get("action_plan", ""), height=80, key=f"action_{q['id']}")
+
+        files = st.file_uploader(
+            "Subir evidencia para esta pregunta",
+            type=["png", "jpg", "jpeg", "pdf", "xlsx", "xls", "csv", "txt", "zip", "docx", "pptx"],
+            accept_multiple_files=True,
+            key=f"file_{q['id']}",
+        )
+        if files:
+            if st.button(f"Guardar evidencia {q['id']}", key=f"savefiles_{q['id']}"):
+                saved = save_uploaded_evidence(q["id"], files)
+                state.setdefault("files", [])
+                state["files"].extend(saved)
+                st.success(f"Evidencia guardada: {len(saved)} archivo(s).")
+
+        if state.get("files"):
+            with st.expander(f"Evidencias guardadas para {q['id']} ({len(state['files'])})", expanded=False):
+                for path in state["files"]:
+                    st.write(path)
+
+    st.session_state["assessment_answers"][q["id"]] = state
+
+
+def page_isrlive(distributor: str, country: str) -> None:
+    st.subheader("Análisis ISR-Live por distribuidor")
+    st.caption("Carga el CSV/XLSX de ISR-Live. El análisis se filtra al distribuidor seleccionado en la barra lateral.")
+
+    uploaded = st.file_uploader("Subir archivo ISR-Live", type=["csv", "xlsx", "xls"], accept_multiple_files=False, key="isrlive_file")
+    if not uploaded:
+        st.info("Carga un archivo ISR-Live para visualizar base instalada, Machine Configuration y status por modelo.")
+        return
+
+    try:
+        raw_df = read_any_table(uploaded)
+    except Exception as exc:
+        st.error(f"No pude leer el archivo: {exc}")
+        return
+
+    if raw_df.empty:
+        st.warning("El archivo cargado está vacío.")
+        return
+
+    filtered, mapping, msg = filter_isrlive_by_distributor(raw_df, distributor, country)
+    if msg:
+        st.caption(msg)
+
+    if filtered.empty:
+        st.error(f"No encontré registros para el distribuidor seleccionado: {distributor} / {country}.")
+        possible_col = mapping.get("distributor")
+        if possible_col:
+            detected = raw_df[possible_col].dropna().astype(str).drop_duplicates().sort_values().head(80)
+            st.write("Distribuidores detectados en el archivo:")
+            st.dataframe(pd.DataFrame({"Distributor detected": detected}), use_container_width=True, hide_index=True)
+        return
+
+    std = standardize_isrlive(filtered, mapping)
+    st.session_state["last_isrlive_std"] = std
+
+    total = len(std)
+    models = std["Instrument Model"].nunique()
+    mc_incomplete = int((std["Machine Config Status"] == "Incomplete / invalid").sum())
+    statuses = std["Instrument Status"].nunique()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Registros del distribuidor", total)
+    c2.metric("Modelos", models)
+    c3.metric("Machine Config incompleta", mc_incomplete)
+    c4.metric("Estados detectados", statuses)
+
+    render_isrlive_charts(std)
+
+    st.markdown("### Detalle ISR-Live filtrado")
+    st.dataframe(std, use_container_width=True, hide_index=True)
+
+    bad = std[std["Machine Config Status"] == "Incomplete / invalid"].copy()
+    st.markdown("### Equipos con Machine Configuration incompleta / inválida")
+    if bad.empty:
+        st.success("No se detectaron Machine Configuration inválidas en el distribuidor seleccionado.")
+    else:
+        st.dataframe(bad, use_container_width=True, hide_index=True)
+
+    excel_bytes = to_excel_bytes({"ISR Filtered": std, "Machine Config Issues": bad})
+    st.download_button(
+        "Descargar análisis ISR-Live filtrado",
+        data=excel_bytes,
+        file_name=f"ISRLive_Analysis_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx".replace(" ", "_"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def render_isrlive_charts(std: pd.DataFrame) -> None:
+    st.markdown("### Base instalada por modelo")
+    by_model = std.groupby("Instrument Model", as_index=False).size().rename(columns={"size": "Installed Base"})
+    fig1 = px.bar(by_model, x="Instrument Model", y="Installed Base", text="Installed Base", title="Installed Base by Instrument Model")
+    fig1.update_layout(height=420, xaxis_title="Modelo", yaxis_title="Cantidad")
+    st.plotly_chart(fig1, use_container_width=True)
+
+    st.markdown("### Machine Configuration por modelo")
+    mc = std.groupby(["Instrument Model", "Machine Config Status"], as_index=False).size().rename(columns={"size": "Count"})
+    fig2 = px.bar(mc, x="Instrument Model", y="Count", color="Machine Config Status", text="Count", barmode="group", title="Machine Configuration complete vs incomplete by model")
+    fig2.update_layout(height=430, xaxis_title="Modelo", yaxis_title="Cantidad")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("### Instrument Status por modelo")
+    st_df = std.groupby(["Instrument Model", "Instrument Status"], as_index=False).size().rename(columns={"size": "Count"})
+    fig3 = px.bar(st_df, x="Instrument Model", y="Count", color="Instrument Status", text="Count", barmode="stack", title="Instrument Status by model")
+    fig3.update_layout(height=470, xaxis_title="Modelo", yaxis_title="Cantidad")
+    st.plotly_chart(fig3, use_container_width=True)
+
+
+def page_export_all(distributor: str, country: str, start_date: date, end_date: date) -> None:
+    st.subheader("Exportación consolidada")
+    assessment = build_assessment_dataframe()
+    isr = st.session_state.get("last_isrlive_std", pd.DataFrame())
+    meta = pd.DataFrame([{
+        "Distributor": distributor,
+        "Country": country,
+        "Period start": str(start_date),
+        "Period end": str(end_date),
+        "Generated at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Build": APP_VERSION,
+    }])
+    sheets = {"Summary": meta, "Corporate Assessment": assessment}
+    if isinstance(isr, pd.DataFrame) and not isr.empty:
+        sheets["ISR-Live Analysis"] = isr
+        sheets["Machine Config Issues"] = isr[isr["Machine Config Status"] == "Incomplete / invalid"]
+
+    excel_bytes = to_excel_bytes(sheets)
+    st.download_button(
+        "Descargar paquete consolidado Excel",
+        data=excel_bytes,
+        file_name=f"LATAM_Service_Assessment_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx".replace(" ", "_"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    json_payload = {
+        "metadata": meta.to_dict(orient="records"),
+        "assessment": assessment.to_dict(orient="records"),
+        "isrlive": isr.to_dict(orient="records") if isinstance(isr, pd.DataFrame) and not isr.empty else [],
+    }
+    st.download_button(
+        "Descargar respaldo JSON",
+        data=json.dumps(json_payload, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"LATAM_Service_Assessment_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        mime="application/json",
+    )
+
+
+# ============================================================
 # Main
-# ------------------------------------------------------------
+# ============================================================
+
 def main() -> None:
     st.set_page_config(page_title="LATAM Service Assessment", page_icon="🧪", layout="wide")
     inject_css()
+    distributor, country, start_date, end_date = sidebar_context()
     render_header()
-    meta = distributor_selector()
 
-    if not meta["distributor"]:
-        st.stop()
+    page = st.tabs([
+        "Assessment corporativo",
+        "Análisis ISR-Live",
+        "Exportación consolidada",
+    ])
 
-    tab1, tab2 = st.tabs(["Assessment corporativo", "Análisis ISR-Live"])
-    with tab1:
-        page_corporate(meta)
-    with tab2:
-        page_isrlive(meta)
+    with page[0]:
+        page_corporate_assessment(distributor, country, start_date, end_date)
+    with page[1]:
+        page_isrlive(distributor, country)
+    with page[2]:
+        page_export_all(distributor, country, start_date, end_date)
+
 
 if __name__ == "__main__":
     main()
