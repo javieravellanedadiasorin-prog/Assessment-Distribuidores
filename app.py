@@ -18,6 +18,7 @@ import io
 import json
 import re
 import zipfile
+from html import escape
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -26,12 +27,33 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        Image as RLImage,
+        KeepTogether,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+    REPORTLAB_AVAILABLE = True
+except Exception:
+    REPORTLAB_AVAILABLE = False
+
+
 
 # ============================================================
 # Configuración base
 # ============================================================
 
-APP_VERSION = "v3.5 - Emergency Stable Build"
+APP_VERSION = "v3.6 - Technical PDF Report Build"
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = BASE_DIR / "evidence"
@@ -112,6 +134,61 @@ FALLBACK_DISTRIBUTORS = [
     {"Distributor name": "Biotec del Perú", "Country": "Peru"},
     {"Distributor name": "Islalab", "Country": "Puerto Rico"},
     {"Distributor name": "Diamed Miami", "Country": "United States"},
+]
+
+
+
+TECHNICAL_STANDARDS = [
+    {
+        "code": "NT-01",
+        "title": "Installed Base Governance",
+        "description": "La base instalada debe estar certificada, trazable y alineada con ISR-Live para el periodo evaluado.",
+    },
+    {
+        "code": "NT-02",
+        "title": "Machine Configuration Completa",
+        "description": "Machine Configuration debe contener información real del instrumento. No se aceptan campos vacíos, Don't know, Data not available, Not done ni equivalentes.",
+    },
+    {
+        "code": "NT-03",
+        "title": "Estado Operativo del Instrumento",
+        "description": "Cada instrumento debe tener un estado operativo claro: In routine, Scrapped, Warehouse/Stock, Demo, Removed/Inactive u otro estado verificable.",
+    },
+    {
+        "code": "NT-04",
+        "title": "Software y Plataforma",
+        "description": "La versión de software debe estar validada contra la versión objetivo vigente definida para cada plataforma y documentada con evidencia.",
+    },
+    {
+        "code": "NT-05",
+        "title": "Mantenimiento Preventivo",
+        "description": "PM Planner, PM Plan, PM Completion y PM Kit Stock deben estar actualizados y soportados por reportes o evidencias de campo.",
+    },
+    {
+        "code": "NT-06",
+        "title": "Capacidad Técnica",
+        "description": "El distribuidor debe mantener FSE/AS entrenados, Lead FSE definido y matriz de competencias técnica actualizada.",
+    },
+    {
+        "code": "NT-07",
+        "title": "Accesos y Soporte Remoto",
+        "description": "Las cuentas y herramientas corporativas autorizadas deben estar actualizadas. Para acceso remoto técnico se debe evidenciar BeyondTrust/Bomgar cuando aplique.",
+    },
+    {
+        "code": "NT-08",
+        "title": "Stock, Herramientas y Readiness",
+        "description": "El distribuidor debe demostrar disponibilidad de stock crítico, herramientas dedicadas y kits requeridos para garantizar continuidad operativa.",
+    },
+    {
+        "code": "NT-09",
+        "title": "Trazabilidad de Servicio y RGA/OBF",
+        "description": "Las actividades de servicio, garantías, OBF y RGAs deben estar trazadas en herramientas aprobadas y con evidencia documental.",
+    },
+    {
+        "code": "NT-10",
+        "title": "Evidencia de Visitas a Cliente",
+        "description": "Las visitas técnicas deben quedar documentadas con service report, fotografías, hallazgos, conclusiones y acciones de seguimiento.",
+    },
 ]
 
 INVALID_MACHINE_CONFIG_VALUES = {
@@ -250,7 +327,7 @@ def render_header() -> None:
             <span class="pill">Technical Support Health Check</span>
             <span class="pill">{APP_VERSION}</span>
             <h1>LATAM Distributor Service Excellence Assessment</h1>
-            <p>Assessment corporativo completo con evidencia por pregunta + análisis ISR-Live enfocado únicamente en el distribuidor seleccionado.</p>
+            <p>Assessment corporativo con evidencia por pregunta, análisis ISR-Live y reporte PDF técnico consolidado.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -754,6 +831,363 @@ def render_isrlive_charts(std: pd.DataFrame) -> None:
     st.plotly_chart(fig3, use_container_width=True)
 
 
+
+# ============================================================
+# Reporte PDF tecnico
+# ============================================================
+
+def pdf_safe(value) -> str:
+    """Texto seguro para ReportLab con fuentes estándar."""
+    text = normalize_text(value)
+    text = text.replace("–", "-").replace("—", "-").replace("•", "-")
+    text = text.replace("✅", "OK").replace("❌", "NO").replace("⚪", "N/A")
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def ptxt(value) -> str:
+    return escape(pdf_safe(value)).replace("\n", "<br/>")
+
+
+def evidence_basename(path: str) -> str:
+    try:
+        return Path(path).name
+    except Exception:
+        return str(path)
+
+
+def is_image_path(path: str) -> bool:
+    return str(path).lower().endswith((".png", ".jpg", ".jpeg")) and Path(path).exists()
+
+
+def get_pdf_styles():
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="CoverTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        leading=24,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#0F172A"),
+        spaceAfter=10,
+    ))
+    styles.add(ParagraphStyle(
+        name="CoverSubtitle",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#334155"),
+        spaceAfter=12,
+    ))
+    styles.add(ParagraphStyle(
+        name="SectionHeader",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=16,
+        textColor=colors.HexColor("#075985"),
+        spaceBefore=12,
+        spaceAfter=7,
+    ))
+    styles.add(ParagraphStyle(
+        name="SmallText",
+        parent=styles["Normal"],
+        fontSize=7.4,
+        leading=9,
+        textColor=colors.HexColor("#0F172A"),
+    ))
+    styles.add(ParagraphStyle(
+        name="TinyText",
+        parent=styles["Normal"],
+        fontSize=6.4,
+        leading=7.6,
+        textColor=colors.HexColor("#334155"),
+    ))
+    styles.add(ParagraphStyle(
+        name="FindingText",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#111827"),
+        spaceAfter=4,
+    ))
+    return styles
+
+
+def add_table_style(table: Table, header_color: str = "#0F172A") -> Table:
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 7.2),
+        ("FONTSIZE", (0, 1), (-1, -1), 6.8),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return table
+
+
+def dataframe_to_pdf_table(df: pd.DataFrame, columns: List[str], styles, max_rows: int = 40, widths: Optional[List[float]] = None, header_color: str = "#0F172A") -> Table:
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=columns)
+    display = df.copy()
+    for col in columns:
+        if col not in display.columns:
+            display[col] = ""
+    display = display[columns].head(max_rows).fillna("")
+    rows = [[Paragraph(ptxt(col), styles["TinyText"]) for col in columns]]
+    for _, row in display.iterrows():
+        rows.append([Paragraph(ptxt(row.get(col, "")), styles["TinyText"]) for col in columns])
+    if widths is None:
+        widths = [17 * cm / max(1, len(columns))] * len(columns)
+    return add_table_style(Table(rows, colWidths=widths, repeatRows=1), header_color=header_color)
+
+
+def risk_summary_text(global_score: float, assessment: pd.DataFrame, isr: pd.DataFrame) -> str:
+    open_items = 0
+    critical_items = 0
+    if assessment is not None and not assessment.empty:
+        open_items = int(assessment[assessment["Status"].isin(["Open", "In progress", "Overdue"])].shape[0])
+        critical_items = int((assessment["Risk"] == "Critical").sum())
+    mc_issues = 0
+    if isinstance(isr, pd.DataFrame) and not isr.empty and "Machine Config Status" in isr.columns:
+        mc_issues = int((isr["Machine Config Status"] == "Incomplete / invalid").sum())
+
+    if global_score >= 90 and critical_items == 0 and mc_issues == 0:
+        conclusion = "El distribuidor evidencia un nivel de control tecnico alto para el periodo evaluado."
+    elif global_score >= 75:
+        conclusion = "El distribuidor evidencia un nivel controlado, con acciones de seguimiento que deben cerrarse para robustecer la trazabilidad."
+    elif global_score >= 60:
+        conclusion = "El distribuidor presenta brechas relevantes que requieren plan de accion formal y seguimiento cercano."
+    else:
+        conclusion = "El distribuidor presenta un riesgo operativo alto; se recomienda intervencion prioritaria y seguimiento ejecutivo."
+
+    return (
+        f"Score corporativo: {global_score}%. Items abiertos/en progreso/vencidos: {open_items}. "
+        f"Items criticos: {critical_items}. Equipos con Machine Configuration incompleta o invalida: {mc_issues}. "
+        f"{conclusion}"
+    )
+
+
+def create_technical_pdf_report(distributor: str, country: str, start_date: date, end_date: date) -> bytes:
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("ReportLab no esta disponible. Agrega 'reportlab' a requirements.txt.")
+
+    assessment = build_assessment_dataframe()
+    isr = st.session_state.get("last_isrlive_std", pd.DataFrame())
+    valid_scores = assessment["Score"].dropna()
+    global_score = round(valid_scores.mean() * 100, 1) if len(valid_scores) else 0
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    evidence_count = sum(len(get_question_state(q["id"]).get("files", [])) for q in CORPORATE_QUESTIONS)
+    completed = int(assessment["Response"].str.startswith(("Y", "P", "N"), na=False).sum())
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.15 * cm,
+        rightMargin=1.15 * cm,
+        topMargin=1.0 * cm,
+        bottomMargin=1.0 * cm,
+        title=f"Technical Assessment Report - {distributor}",
+        author="DiaSorin LATAM Service",
+    )
+    styles = get_pdf_styles()
+    story = []
+
+    # Portada / resumen
+    story.append(Paragraph("LATAM Distributor Service Excellence Assessment", styles["CoverTitle"]))
+    story.append(Paragraph("Technical Assessment Report - Normas tecnicas, resultados, evidencias y hallazgos", styles["CoverSubtitle"]))
+
+    meta_rows = [
+        ["Distribuidor", distributor, "Pais", country],
+        ["Periodo evaluado", f"{start_date} a {end_date}", "Fecha de generacion", generated_at],
+        ["Build", APP_VERSION, "Score corporativo", f"{global_score}%"],
+        ["Preguntas respondidas", f"{completed}/{len(CORPORATE_QUESTIONS)}", "Evidencias cargadas", str(evidence_count)],
+    ]
+    meta_table = Table([[Paragraph(ptxt(c), styles["SmallText"]) for c in row] for row in meta_rows], colWidths=[3.4 * cm, 5.0 * cm, 3.4 * cm, 5.0 * cm])
+    meta_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EFF6FF")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#0F172A")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#93C5FD")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("Conclusion tecnica ejecutiva", styles["SectionHeader"]))
+    story.append(Paragraph(ptxt(risk_summary_text(global_score, assessment, isr)), styles["FindingText"]))
+
+    # Normas tecnicas / criterios
+    story.append(Paragraph("Normas tecnicas y criterios de evaluacion", styles["SectionHeader"]))
+    standards_rows = [["Codigo", "Criterio tecnico", "Descripcion"]]
+    for item in TECHNICAL_STANDARDS:
+        standards_rows.append([item["code"], item["title"], item["description"]])
+    standards_table = Table(
+        [[Paragraph(ptxt(c), styles["TinyText"]) for c in row] for row in standards_rows],
+        colWidths=[1.7 * cm, 4.2 * cm, 11.0 * cm],
+        repeatRows=1,
+    )
+    story.append(add_table_style(standards_table, header_color="#075985"))
+
+    # Score por categoria
+    story.append(Paragraph("Resultado por categoria", styles["SectionHeader"]))
+    if not assessment.dropna(subset=["Score"]).empty:
+        cat_score = assessment.dropna(subset=["Score"]).groupby("Category", as_index=False)["Score"].mean()
+        cat_score["Score %"] = (cat_score["Score"] * 100).round(1)
+        cat_score = cat_score[["Category", "Score %"]]
+        story.append(dataframe_to_pdf_table(cat_score, ["Category", "Score %"], styles, max_rows=50, widths=[12.5 * cm, 3.5 * cm], header_color="#0F766E"))
+    else:
+        story.append(Paragraph("No hay respuestas puntuables registradas aun.", styles["FindingText"]))
+
+    # Assessment completo
+    story.append(PageBreak())
+    story.append(Paragraph("Assessment corporativo completo", styles["SectionHeader"]))
+    assessment_cols = ["ID", "Category", "Question", "Response", "Risk", "Status", "Owner", "Due date", "Comments", "Action plan", "Evidence note"]
+    story.append(dataframe_to_pdf_table(
+        assessment,
+        assessment_cols,
+        styles,
+        max_rows=100,
+        widths=[1.3 * cm, 2.7 * cm, 3.2 * cm, 2.0 * cm, 1.6 * cm, 1.8 * cm, 2.1 * cm, 1.8 * cm, 3.2 * cm, 3.2 * cm, 2.8 * cm],
+        header_color="#1E3A8A",
+    ))
+
+    # Evidencias
+    story.append(PageBreak())
+    story.append(Paragraph("Evidencias por pregunta", styles["SectionHeader"]))
+    any_evidence = False
+    image_counter = 0
+    max_images = 24
+    for q in CORPORATE_QUESTIONS:
+        state = get_question_state(q["id"])
+        files = state.get("files", [])
+        if not files:
+            continue
+        any_evidence = True
+        story.append(KeepTogether([
+            Paragraph(f"<b>{ptxt(q['id'])} - {ptxt(q['question'])}</b>", styles["FindingText"]),
+            Paragraph(f"Evidencia esperada: {ptxt(q['evidence'])}", styles["TinyText"]),
+            Paragraph(f"Nota registrada: {ptxt(state.get('evidence_note', ''))}", styles["TinyText"]),
+        ]))
+        evidence_rows = [["Archivo", "Tipo", "Incluido visualmente"]]
+        for path in files:
+            suffix = Path(path).suffix.lower().replace(".", "") or "archivo"
+            included = "Imagen adjunta en el reporte" if is_image_path(path) and image_counter < max_images else "Listado documental"
+            evidence_rows.append([evidence_basename(path), suffix.upper(), included])
+        evidence_table = Table(
+            [[Paragraph(ptxt(c), styles["TinyText"]) for c in row] for row in evidence_rows],
+            colWidths=[9.0 * cm, 2.0 * cm, 5.2 * cm],
+            repeatRows=1,
+        )
+        story.append(add_table_style(evidence_table, header_color="#334155"))
+        story.append(Spacer(1, 0.12 * cm))
+
+        # Inserta thumbnails de imagenes cargadas
+        image_paths = [path for path in files if is_image_path(path)]
+        if image_paths and image_counter < max_images:
+            img_cells = []
+            row_cells = []
+            for path in image_paths:
+                if image_counter >= max_images:
+                    break
+                try:
+                    img = RLImage(path)
+                    max_w = 5.1 * cm
+                    max_h = 3.7 * cm
+                    ratio = min(max_w / float(img.imageWidth), max_h / float(img.imageHeight))
+                    img.drawWidth = float(img.imageWidth) * ratio
+                    img.drawHeight = float(img.imageHeight) * ratio
+                    cell = [img, Paragraph(ptxt(evidence_basename(path)), styles["TinyText"])]
+                    row_cells.append(cell)
+                    image_counter += 1
+                    if len(row_cells) == 3:
+                        img_cells.append(row_cells)
+                        row_cells = []
+                except Exception:
+                    continue
+            if row_cells:
+                while len(row_cells) < 3:
+                    row_cells.append("")
+                img_cells.append(row_cells)
+            if img_cells:
+                img_table = Table(img_cells, colWidths=[5.4 * cm, 5.4 * cm, 5.4 * cm])
+                img_table.setStyle(TableStyle([
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("PADDING", (0, 0), (-1, -1), 4),
+                ]))
+                story.append(img_table)
+        story.append(Spacer(1, 0.25 * cm))
+    if not any_evidence:
+        story.append(Paragraph("No hay evidencias cargadas en la sesion actual. El reporte deja trazabilidad de resultados y hallazgos, pero no adjunta archivos.", styles["FindingText"]))
+
+    # ISR-Live
+    story.append(PageBreak())
+    story.append(Paragraph("Analisis ISR-Live del distribuidor seleccionado", styles["SectionHeader"]))
+    if isinstance(isr, pd.DataFrame) and not isr.empty:
+        by_model = isr.groupby("Instrument Model", as_index=False).size().rename(columns={"size": "Installed Base"})
+        story.append(Paragraph("Base instalada por modelo", styles["FindingText"]))
+        story.append(dataframe_to_pdf_table(by_model, ["Instrument Model", "Installed Base"], styles, max_rows=30, widths=[11.5 * cm, 4.0 * cm], header_color="#075985"))
+        story.append(Spacer(1, 0.18 * cm))
+
+        mc = isr.groupby(["Instrument Model", "Machine Config Status"], as_index=False).size().rename(columns={"size": "Count"})
+        story.append(Paragraph("Machine Configuration por modelo", styles["FindingText"]))
+        story.append(dataframe_to_pdf_table(mc, ["Instrument Model", "Machine Config Status", "Count"], styles, max_rows=60, widths=[6.3 * cm, 6.3 * cm, 3.0 * cm], header_color="#0F766E"))
+        story.append(Spacer(1, 0.18 * cm))
+
+        status_df = isr.groupby(["Instrument Model", "Instrument Status"], as_index=False).size().rename(columns={"size": "Count"})
+        story.append(Paragraph("Instrument Status por modelo", styles["FindingText"]))
+        story.append(dataframe_to_pdf_table(status_df, ["Instrument Model", "Instrument Status", "Count"], styles, max_rows=80, widths=[6.3 * cm, 6.3 * cm, 3.0 * cm], header_color="#1E3A8A"))
+        story.append(Spacer(1, 0.18 * cm))
+
+        bad = isr[isr["Machine Config Status"] == "Incomplete / invalid"].copy()
+        story.append(Paragraph("Equipos con Machine Configuration incompleta o invalida", styles["FindingText"]))
+        if bad.empty:
+            story.append(Paragraph("No se detectaron Machine Configuration invalidas para el distribuidor seleccionado.", styles["SmallText"]))
+        else:
+            story.append(dataframe_to_pdf_table(
+                bad,
+                ["Serial Number", "Instrument Model", "Customer", "City", "Instrument Status", "Machine Configuration", "Software Version"],
+                styles,
+                max_rows=80,
+                widths=[2.4 * cm, 2.7 * cm, 3.0 * cm, 2.2 * cm, 2.8 * cm, 3.5 * cm, 2.3 * cm],
+                header_color="#7F1D1D",
+            ))
+    else:
+        story.append(Paragraph("No se ha cargado un archivo ISR-Live filtrado en la sesion actual.", styles["FindingText"]))
+
+    # Plan de acciones abiertas
+    story.append(PageBreak())
+    story.append(Paragraph("Plan de accion y pendientes", styles["SectionHeader"]))
+    open_plan = assessment[assessment["Status"].isin(["Open", "In progress", "Overdue"])].copy()
+    if open_plan.empty:
+        story.append(Paragraph("No hay acciones abiertas registradas en el assessment actual.", styles["FindingText"]))
+    else:
+        story.append(dataframe_to_pdf_table(
+            open_plan,
+            ["ID", "Category", "Question", "Risk", "Status", "Owner", "Due date", "Action plan"],
+            styles,
+            max_rows=100,
+            widths=[1.3 * cm, 3.0 * cm, 3.4 * cm, 1.7 * cm, 2.0 * cm, 2.3 * cm, 1.9 * cm, 4.2 * cm],
+            header_color="#92400E",
+        ))
+
+    story.append(Spacer(1, 0.35 * cm))
+    story.append(Paragraph("Nota tecnica: este informe consolida la informacion diligenciada en la app, la evidencia cargada durante la sesion y los datos ISR-Live cargados para el distribuidor seleccionado. La interpretacion final debe validarse contra los procedimientos corporativos vigentes y la evidencia original.", styles["TinyText"]))
+
+    doc.build(story)
+    return buffer.getvalue()
+
 def page_export_all(distributor: str, country: str, start_date: date, end_date: date) -> None:
     st.subheader("Exportación consolidada")
     assessment = build_assessment_dataframe()
@@ -790,6 +1224,22 @@ def page_export_all(distributor: str, country: str, start_date: date, end_date: 
         file_name=f"LATAM_Service_Assessment_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         mime="application/json",
     )
+
+    st.markdown("### Informe PDF tecnico")
+    st.caption("Genera un PDF con normas tecnicas, score, resultados del assessment, evidencias cargadas, analisis ISR-Live y plan de accion.")
+    if REPORTLAB_AVAILABLE:
+        try:
+            pdf_bytes = create_technical_pdf_report(distributor, country, start_date, end_date)
+            st.download_button(
+                "Descargar informe PDF tecnico",
+                data=pdf_bytes,
+                file_name=f"Technical_Assessment_Report_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf".replace(" ", "_"),
+                mime="application/pdf",
+            )
+        except Exception as exc:
+            st.error(f"No fue posible generar el PDF: {exc}")
+    else:
+        st.error("ReportLab no esta instalado. Verifica que requirements.txt incluya reportlab.")
 
 
 # ============================================================
