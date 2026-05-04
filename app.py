@@ -244,8 +244,8 @@ def distributor_country_selector(prefix: str = "corporate") -> Tuple[str, str, s
     row = filtered[filtered["Country"] == country].head(1)
     world_region = clean_text(row["World Region"].iloc[0]) if not row.empty and "World Region" in row.columns else ""
     commercial_region = clean_text(row["Commercial Region"].iloc[0]) if not row.empty and "Commercial Region" in row.columns else ""
-    c3.text_input("World Region", value=world_region, disabled=True, key=f"{prefix}_world_region")
-    c4.text_input("Commercial Region", value=commercial_region, disabled=True, key=f"{prefix}_commercial_region")
+    c3.text_input("World Region", value=world_region, disabled=True, key=f"{prefix}_world_region_display")
+    c4.text_input("Commercial Region", value=commercial_region, disabled=True, key=f"{prefix}_commercial_region_display")
 
     return distributor, country, world_region, commercial_region
 
