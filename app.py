@@ -30,7 +30,7 @@ import streamlit as st
 try:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (
@@ -53,7 +53,7 @@ except Exception:
 # Configuración base
 # ============================================================
 
-APP_VERSION = "v3.6 - Technical PDF Report Build"
+APP_VERSION = "v3.7 - Visible International Technical PDF Build"
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = BASE_DIR / "evidence"
@@ -191,6 +191,59 @@ TECHNICAL_STANDARDS = [
     },
 ]
 
+INTERNATIONAL_TECHNICAL_REFERENCES = [
+    {
+        "reference": "ISO 9001:2015",
+        "scope": "Sistema de gestión de calidad",
+        "assessment_use": "Base para control documental, trazabilidad, acciones correctivas y mejora continua del soporte técnico.",
+    },
+    {
+        "reference": "ISO 13485:2016",
+        "scope": "Sistema de gestión de calidad para dispositivos médicos",
+        "assessment_use": "Referencia para documentación de servicio, control de registros, competencia técnica y trazabilidad de actividades sobre equipos IVD.",
+    },
+    {
+        "reference": "ISO 14971:2019",
+        "scope": "Gestión de riesgos para dispositivos médicos",
+        "assessment_use": "Referencia para clasificar riesgos técnicos, priorizar acciones y documentar mitigaciones.",
+    },
+    {
+        "reference": "ISO 19011:2018",
+        "scope": "Directrices para auditoría de sistemas de gestión",
+        "assessment_use": "Referencia para estructurar entrevistas, revisión de evidencia y hallazgos del assessment.",
+    },
+    {
+        "reference": "ISO 15189:2022",
+        "scope": "Laboratorios médicos - calidad y competencia",
+        "assessment_use": "Referencia contextual para trazabilidad, mantenimiento y continuidad operativa en clientes de laboratorio clínico.",
+    },
+    {
+        "reference": "ISO/IEC 17025:2017",
+        "scope": "Competencia de laboratorios de ensayo y calibración",
+        "assessment_use": "Referencia contextual para control de equipos, registros técnicos y evidencia de verificación/calibración cuando aplique.",
+    },
+    {
+        "reference": "IEC 62304:2006 + AMD1:2015",
+        "scope": "Ciclo de vida de software de dispositivos médicos",
+        "assessment_use": "Referencia para control de versión de software, evidencia de actualización y trazabilidad de cambios en plataformas diagnósticas.",
+    },
+    {
+        "reference": "IEC 61010-1",
+        "scope": "Requisitos de seguridad para equipos eléctricos de medición, control y laboratorio",
+        "assessment_use": "Referencia contextual para seguridad eléctrica, condiciones de instalación, mantenimiento y estado físico del instrumento.",
+    },
+    {
+        "reference": "IEC 61326-2-6",
+        "scope": "Compatibilidad electromagnética para equipos IVD",
+        "assessment_use": "Referencia contextual para condiciones de instalación, ambiente técnico y estabilidad operativa de analizadores IVD.",
+    },
+    {
+        "reference": "ISO 10012:2003",
+        "scope": "Sistemas de gestión de las mediciones",
+        "assessment_use": "Referencia para control metrológico, herramientas, verificaciones y registros asociados a actividades de servicio.",
+    },
+]
+
 INVALID_MACHINE_CONFIG_VALUES = {
     "", "-", "--", "n/a", "na", "nan", "none", "null", "no",
     "not available", "data not available", "data no available",
@@ -272,6 +325,16 @@ def inject_css() -> None:
             padding-top: .7rem;
             border-top: 1px solid rgba(148, 163, 184, .18);
         }
+        .pdf-panel {
+            background: linear-gradient(135deg, rgba(0,229,255,.14), rgba(29,78,216,.18));
+            border: 1px solid rgba(0,229,255,.40);
+            border-radius: 18px;
+            padding: 1rem 1.2rem;
+            margin: 0.8rem 0 1.1rem 0;
+            box-shadow: 0 0 28px rgba(0,229,255,.10);
+        }
+        .pdf-panel-title {font-weight: 800; font-size: 1.05rem; color: #E0F2FE; margin-bottom: .25rem;}
+        .pdf-panel-subtitle {font-size: .88rem; color: #BAE6FD;}
         .question-card {
             padding: 1.05rem 1.15rem;
             margin: .8rem 0 1rem 0;
@@ -990,7 +1053,7 @@ def create_technical_pdf_report(distributor: str, country: str, start_date: date
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
+        pagesize=landscape(A4),
         leftMargin=1.15 * cm,
         rightMargin=1.15 * cm,
         topMargin=1.0 * cm,
@@ -1037,6 +1100,22 @@ def create_technical_pdf_report(distributor: str, country: str, start_date: date
         repeatRows=1,
     )
     story.append(add_table_style(standards_table, header_color="#075985"))
+
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(Paragraph("Referencias tecnicas internacionales aplicables", styles["SectionHeader"]))
+    story.append(Paragraph(
+        "Las siguientes referencias se incluyen como marco tecnico internacional de buenas practicas para calidad, trazabilidad, competencia, riesgo y control de equipos IVD. Este assessment no certifica cumplimiento normativo; documenta evidencia operativa para gestion tecnica del distribuidor.",
+        styles["FindingText"],
+    ))
+    intl_rows = [["Referencia", "Alcance", "Uso dentro del assessment"]]
+    for ref in INTERNATIONAL_TECHNICAL_REFERENCES:
+        intl_rows.append([ref["reference"], ref["scope"], ref["assessment_use"]])
+    intl_table = Table(
+        [[Paragraph(ptxt(c), styles["TinyText"]) for c in row] for row in intl_rows],
+        colWidths=[3.2 * cm, 4.6 * cm, 9.0 * cm],
+        repeatRows=1,
+    )
+    story.append(add_table_style(intl_table, header_color="#155E75"))
 
     # Score por categoria
     story.append(Paragraph("Resultado por categoria", styles["SectionHeader"]))
@@ -1242,6 +1321,35 @@ def page_export_all(distributor: str, country: str, start_date: date, end_date: 
         st.error("ReportLab no esta instalado. Verifica que requirements.txt incluya reportlab.")
 
 
+def render_global_pdf_download_panel(distributor: str, country: str, start_date: date, end_date: date) -> None:
+    st.markdown(
+        """
+        <div class="pdf-panel">
+            <div class="pdf-panel-title">📄 Informe técnico normativo disponible</div>
+            <div class="pdf-panel-subtitle">Descarga un PDF consolidado con referencias técnicas internacionales, resultados del assessment, evidencias cargadas, análisis ISR-Live y plan de acción.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if REPORTLAB_AVAILABLE:
+        try:
+            pdf_bytes = create_technical_pdf_report(distributor, country, start_date, end_date)
+            st.download_button(
+                "📄 Descargar PDF con normas técnicas internacionales",
+                data=pdf_bytes,
+                file_name=f"Technical_Normative_Assessment_Report_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf".replace(" ", "_"),
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True,
+                key="global_pdf_download",
+            )
+        except Exception as exc:
+            st.error(f"No fue posible generar el PDF técnico normativo: {exc}")
+    else:
+        st.error("No se puede generar el PDF porque ReportLab no está instalado. Verifica que requirements.txt incluya reportlab y redeploya la app.")
+
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -1251,6 +1359,7 @@ def main() -> None:
     inject_css()
     distributor, country, start_date, end_date = sidebar_context()
     render_header()
+    render_global_pdf_download_panel(distributor, country, start_date, end_date)
 
     page = st.tabs([
         "Assessment corporativo",
