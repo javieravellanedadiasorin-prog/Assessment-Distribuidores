@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 try:
@@ -112,6 +113,7 @@ CORPORATE_QUESTIONS = [
     {"id": "CV-01", "category": "Customer Visit", "question": "Customer 1", "evidence": "Evidencia de visita técnica al cliente 1: fotos, service report, hallazgos."},
     {"id": "CV-02", "category": "Customer Visit", "question": "Customer 2", "evidence": "Evidencia de visita técnica al cliente 2: fotos, service report, hallazgos."},
     {"id": "CV-03", "category": "Customer Visit", "question": "Customer 3", "evidence": "Evidencia de visita técnica al cliente 3: fotos, service report, hallazgos."},
+    {"id": "IBV-01", "category": "Installed Base Value", "question": "Instrument economic value and spare parts cost to date", "evidence": "Adjuntar archivo del distribuidor con serial number, installation date inicial y costo acumulado en repuestos a la fecha para cada instrumento."},
 ]
 
 
@@ -366,6 +368,13 @@ def inject_css() -> None:
             border-radius: 18px;
             border: 1px solid rgba(34, 211, 238, .20);
             background: rgba(15, 23, 42, .72);
+        }
+        .summary-block {
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            border: 1px solid rgba(34,211,238,.18);
+            background: linear-gradient(135deg, rgba(15,23,42,.88), rgba(8,47,73,.42));
+            margin: 1rem 0;
         }
         div[data-testid="stMetricValue"] {font-size: 1.8rem; color: #ecfeff;}
         div[data-testid="stMetricLabel"] {color: #bae6fd;}
@@ -648,11 +657,88 @@ def to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     return output.getvalue()
 
 
+def futuristic_layout(fig, title: str, height: int = 430):
+    fig.update_layout(
+        title=title,
+        height=height,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(2,6,23,0.18)",
+        font=dict(color="#E2E8F0"),
+        title_font=dict(color="#E0F2FE", size=18),
+        legend_title_text="",
+        xaxis=dict(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor="rgba(148,163,184,0.10)", zeroline=False),
+        margin=dict(l=30, r=25, t=65, b=35),
+    )
+    return fig
+
+
+def render_expected_vs_obtained_chart(df_assessment: pd.DataFrame) -> None:
+    valid = df_assessment.dropna(subset=["Score"]).copy()
+    if valid.empty:
+        st.info("La gráfica final se habilitará cuando tengas respuestas puntuables en el assessment.")
+        return
+
+    cat = valid.groupby("Category", as_index=False)["Score"].mean()
+    cat["Obtained"] = (cat["Score"] * 100).round(1)
+    cat["Expected"] = 100.0
+    cat["Gap"] = (cat["Expected"] - cat["Obtained"]).round(1)
+    cat = cat.sort_values("Obtained", ascending=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=cat["Category"], x=cat["Expected"], orientation="h",
+        name="Esperado",
+        marker=dict(color="rgba(148,163,184,0.22)", line=dict(color="rgba(125,211,252,0.40)", width=1.5)),
+        text=["100%"] * len(cat), textposition="outside", cliponaxis=False,
+        hovertemplate="Categoría: %{y}<br>Esperado: %{x}%<extra></extra>"
+    ))
+    fig.add_trace(go.Bar(
+        y=cat["Category"], x=cat["Obtained"], orientation="h",
+        name="Obtenido",
+        marker=dict(color="rgba(34,211,238,0.88)", line=dict(color="#22D3EE", width=1.5)),
+        text=[f"{v:.1f}%" for v in cat["Obtained"]], textposition="inside",
+        hovertemplate="Categoría: %{y}<br>Obtenido: %{x}%<extra></extra>"
+    ))
+    for _, row in cat.iterrows():
+        fig.add_annotation(
+            x=100, y=row["Category"],
+            text=f"Gap: {row['Gap']:.1f}%",
+            xanchor="left", yanchor="middle", showarrow=False,
+            font=dict(color="#F8FAFC", size=11), bgcolor="rgba(15,23,42,0.35)"
+        )
+    fig.update_layout(barmode="overlay", xaxis_title="Cumplimiento (%)", yaxis_title="", bargap=0.30)
+    fig.update_xaxes(range=[0, 115])
+    futuristic_layout(fig, "Resultado esperado vs obtenido por categoría", height=520)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_sidebar_pdf_panel(container, distributor: str, country: str, start_date: date, end_date: date) -> None:
+    with container:
+        st.markdown("### Informe técnico PDF")
+        st.caption("Generador consolidado del assessment y las evidencias de la sesión.")
+        if REPORTLAB_AVAILABLE:
+            try:
+                pdf_bytes = create_technical_pdf_report(distributor, country, start_date, end_date)
+                st.download_button(
+                    "📄 Descargar PDF técnico",
+                    data=pdf_bytes,
+                    file_name=f"Technical_Assessment_Report_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf".replace(" ", "_"),
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="sidebar_pdf_download",
+                )
+            except Exception as exc:
+                st.error(f"No fue posible generar el PDF: {exc}")
+        else:
+            st.error("No se puede generar el PDF porque falta ReportLab en requirements.txt.")
+
+
 # ============================================================
 # Sidebar
 # ============================================================
 
-def sidebar_context() -> Tuple[str, str, date, date]:
+def sidebar_context() -> Tuple[str, str, date, date, object]:
     distributors_df = load_distributors()
     distributors = distributors_df["Distributor name"].dropna().astype(str).sort_values().unique().tolist()
 
@@ -668,13 +754,15 @@ def sidebar_context() -> Tuple[str, str, date, date]:
     if end_date < start_date:
         st.sidebar.error("La fecha final no puede ser anterior a la fecha inicial.")
 
+    pdf_container = st.sidebar.container()
+
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Build activo: {APP_VERSION}")
     st.session_state["selected_distributor"] = selected_distributor
     st.session_state["selected_country"] = selected_country
     st.session_state["period_start"] = str(start_date)
     st.session_state["period_end"] = str(end_date)
-    return selected_distributor, selected_country, start_date, end_date
+    return selected_distributor, selected_country, start_date, end_date, pdf_container
 
 
 # ============================================================
@@ -683,43 +771,42 @@ def sidebar_context() -> Tuple[str, str, date, date]:
 
 def page_corporate_assessment(distributor: str, country: str, start_date: date, end_date: date) -> None:
     st.subheader("Assessment corporativo completo")
-    st.caption("Todas las preguntas del formato original aparecen aquí como tarjetas editables, con evidencia independiente por cada punto.")
+    st.caption("Se mantiene el formato del assessment y se agregan campos de evidencia por pregunta. También se añadió el punto de valor acumulado por instrumento.")
 
     df_assessment = build_assessment_dataframe()
     valid_scores = df_assessment["Score"].dropna()
     global_score = round(valid_scores.mean() * 100, 1) if len(valid_scores) else 0
     completed = int(df_assessment["Response"].str.startswith(("Y", "P", "N"), na=False).sum())
     evidence_count = sum(len(get_question_state(q["id"]).get("files", [])) for q in CORPORATE_QUESTIONS)
+    open_items = int(df_assessment["Status"].isin(["Open", "In progress", "Overdue"]).sum())
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Score corporativo", f"{global_score}%")
     c2.metric("Preguntas respondidas", f"{completed}/{len(CORPORATE_QUESTIONS)}")
     c3.metric("Evidencias cargadas", evidence_count)
-    c4.metric("Distribuidor", distributor)
+    c4.metric("Pendientes abiertos", open_items)
+
+    st.markdown(
+        f"""
+        <div class="summary-block">
+            <b>Contexto vigente:</b> {distributor} · {country} · Periodo {start_date} a {end_date}.<br>
+            <span style="color:#BAE6FD;">El botón del PDF técnico ahora está en la barra lateral izquierda, justo debajo del contexto del assessment.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     categories = list(dict.fromkeys(q["category"] for q in CORPORATE_QUESTIONS))
-    category_filter = st.multiselect("Filtrar categorías", categories, default=categories)
-
     for category in categories:
-        if category not in category_filter:
-            continue
         st.markdown(f"<h3 class='section-title'>{category}</h3>", unsafe_allow_html=True)
         for q in [x for x in CORPORATE_QUESTIONS if x["category"] == category]:
             render_question_card(q)
 
     df_assessment = build_assessment_dataframe()
-    category_score = (
-        df_assessment.dropna(subset=["Score"])
-        .groupby("Category", as_index=False)["Score"].mean()
-    )
-    if not category_score.empty:
-        category_score["Score %"] = (category_score["Score"] * 100).round(1)
-        st.markdown("### Score por categoría")
-        fig = px.bar(category_score, x="Category", y="Score %", text="Score %", title="Corporate assessment score by category")
-        fig.update_layout(height=430, xaxis_title="Categoría", yaxis_title="Score %")
-        st.plotly_chart(fig, use_container_width=True)
+    st.markdown("### Gráfica final del assessment")
+    st.caption("Comparación visual entre lo esperado (100%) y lo obtenido por categoría, con estilo futurista y lectura más ejecutiva.")
+    render_expected_vs_obtained_chart(df_assessment)
 
-    st.markdown("### Exportar assessment")
     meta = pd.DataFrame([{
         "Distributor": distributor,
         "Country": country,
@@ -735,6 +822,7 @@ def page_corporate_assessment(distributor: str, country: str, start_date: date, 
         data=excel_bytes,
         file_name=f"Corporate_Assessment_{distributor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx".replace(" ", "_"),
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="download_assessment_excel",
     )
 
 
@@ -877,22 +965,39 @@ def page_isrlive(distributor: str, country: str) -> None:
 def render_isrlive_charts(std: pd.DataFrame) -> None:
     st.markdown("### Base instalada por modelo")
     by_model = std.groupby("Instrument Model", as_index=False).size().rename(columns={"size": "Installed Base"})
-    fig1 = px.bar(by_model, x="Instrument Model", y="Installed Base", text="Installed Base", title="Installed Base by Instrument Model")
-    fig1.update_layout(height=420, xaxis_title="Modelo", yaxis_title="Cantidad")
+    fig1 = px.bar(
+        by_model, x="Instrument Model", y="Installed Base", text="Installed Base",
+        color="Instrument Model", color_discrete_sequence=["rgba(34,211,238,0.85)", "rgba(59,130,246,0.82)", "rgba(16,185,129,0.82)", "rgba(168,85,247,0.82)"]
+    )
+    futuristic_layout(fig1, "Base instalada por modelo", height=420)
+    fig1.update_traces(marker_line_color="rgba(224,242,254,0.25)", marker_line_width=1.2, textposition="outside")
+    fig1.update_xaxes(title_text="Modelo")
+    fig1.update_yaxes(title_text="Cantidad")
     st.plotly_chart(fig1, use_container_width=True)
 
     st.markdown("### Machine Configuration por modelo")
     mc = std.groupby(["Instrument Model", "Machine Config Status"], as_index=False).size().rename(columns={"size": "Count"})
-    fig2 = px.bar(mc, x="Instrument Model", y="Count", color="Machine Config Status", text="Count", barmode="group", title="Machine Configuration complete vs incomplete by model")
-    fig2.update_layout(height=430, xaxis_title="Modelo", yaxis_title="Cantidad")
+    fig2 = px.bar(
+        mc, x="Instrument Model", y="Count", color="Machine Config Status", text="Count", barmode="group",
+        color_discrete_map={"Complete": "rgba(16,185,129,0.85)", "Incomplete / invalid": "rgba(248,113,113,0.88)"}
+    )
+    futuristic_layout(fig2, "Machine Configuration: completo vs incompleto por modelo", height=440)
+    fig2.update_traces(marker_line_color="rgba(224,242,254,0.28)", marker_line_width=1.2)
+    fig2.update_xaxes(title_text="Modelo")
+    fig2.update_yaxes(title_text="Cantidad")
     st.plotly_chart(fig2, use_container_width=True)
 
     st.markdown("### Instrument Status por modelo")
     st_df = std.groupby(["Instrument Model", "Instrument Status"], as_index=False).size().rename(columns={"size": "Count"})
-    fig3 = px.bar(st_df, x="Instrument Model", y="Count", color="Instrument Status", text="Count", barmode="stack", title="Instrument Status by model")
-    fig3.update_layout(height=470, xaxis_title="Modelo", yaxis_title="Cantidad")
+    fig3 = px.bar(
+        st_df, x="Instrument Model", y="Count", color="Instrument Status", text="Count", barmode="stack",
+        color_discrete_sequence=["rgba(34,211,238,0.85)", "rgba(59,130,246,0.82)", "rgba(16,185,129,0.82)", "rgba(251,191,36,0.82)", "rgba(248,113,113,0.84)", "rgba(168,85,247,0.84)", "rgba(148,163,184,0.80)"]
+    )
+    futuristic_layout(fig3, "Instrument Status por modelo", height=480)
+    fig3.update_traces(marker_line_color="rgba(224,242,254,0.18)", marker_line_width=1.0)
+    fig3.update_xaxes(title_text="Modelo")
+    fig3.update_yaxes(title_text="Cantidad")
     st.plotly_chart(fig3, use_container_width=True)
-
 
 
 # ============================================================
@@ -1357,22 +1462,15 @@ def render_global_pdf_download_panel(distributor: str, country: str, start_date:
 def main() -> None:
     st.set_page_config(page_title="LATAM Service Assessment", page_icon="🧪", layout="wide")
     inject_css()
-    distributor, country, start_date, end_date = sidebar_context()
+    distributor, country, start_date, end_date, pdf_container = sidebar_context()
     render_header()
-    render_global_pdf_download_panel(distributor, country, start_date, end_date)
 
-    page = st.tabs([
-        "Assessment corporativo",
-        "Análisis ISR-Live",
-        "Exportación consolidada",
-    ])
+    page_corporate_assessment(distributor, country, start_date, end_date)
+    st.markdown("---")
+    page_isrlive(distributor, country)
 
-    with page[0]:
-        page_corporate_assessment(distributor, country, start_date, end_date)
-    with page[1]:
-        page_isrlive(distributor, country)
-    with page[2]:
-        page_export_all(distributor, country, start_date, end_date)
+    # El generador de PDF queda en la barra lateral izquierda, debajo del contexto del assessment
+    render_sidebar_pdf_panel(pdf_container, distributor, country, start_date, end_date)
 
 
 if __name__ == "__main__":
